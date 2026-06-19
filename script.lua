@@ -1,8 +1,14 @@
 --[[
-    Vape-Style UI Library for Roblox
-    Compatible with PC & Mobile
-    Author: Architecture-level implementation
-    All instances mount to CoreGui
+    Vape-Style UI Library v2 for Roblox
+    完美兼容 PC & 手机端
+    挂载到 CoreGui
+    
+    核心改进:
+    - 主菜单控制窗口开关
+    - 智能窗口排列不超屏
+    - 通知/欢迎消息系统
+    - 丰富动画 & 音效
+    - 窗口状态持久化
 ]]
 
 -- ============================================================
@@ -14,14 +20,13 @@ local UserInputService = game:GetService("UserInputService")
 local TweenService = game:GetService("TweenService")
 local RunService = game:GetService("RunService")
 local HttpService = game:GetService("HttpService")
-local Stats = game:GetService("Stats")
 local SoundService = game:GetService("SoundService")
+local GuiService = game:GetService("GuiService")
 
 local LocalPlayer = Players.LocalPlayer
-local Mouse = LocalPlayer:GetMouse()
 
 -- ============================================================
--- LIBRARY TABLE
+-- LIBRARY
 -- ============================================================
 local Library = {}
 Library.__index = Library
@@ -33,9 +38,9 @@ Library.Initialized = false
 Library.Visible = true
 Library.ToggleKey = Enum.KeyCode.RightShift
 Library.AccentColor = Color3.fromRGB(67, 160, 255)
-Library.ColorMode = "Static" -- Static, Breathing, Rainbow, Gradient
+Library.ColorMode = "Static"
 Library.DynamicSpeed = 1
-Library.BackgroundTransparency = 0.15
+Library.BackgroundTransparency = 0.08
 Library.CurrentAccent = Color3.fromRGB(67, 160, 255)
 Library.AccentObjects = {}
 Library.AccentGradients = {}
@@ -48,16 +53,72 @@ Library.ArrayListEnabled = false
 Library.KeybindActiveWhenHidden = true
 Library.MobileBallVisible = true
 Library.EnabledModules = {}
+Library.OpenWindows = {}
+Library.WindowStates = {}
+Library.NotificationQueue = {}
 
 -- ============================================================
--- PLATFORM DETECTION
+-- PLATFORM
 -- ============================================================
 local IS_MOBILE = UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled
-local SCALE_FACTOR = IS_MOBILE and 1.25 or 1
-local MIN_TOUCH = 36
+local SCREEN_SIZE = workspace.CurrentCamera.ViewportSize
+local SCALE = IS_MOBILE and 1.2 or 1
+local MIN_TOUCH = 38
+local WINDOW_WIDTH = math.clamp(195 * SCALE, 170, 260)
+local WINDOW_GAP = 8
+local TOP_OFFSET = IS_MOBILE and 55 or 45
+
+-- Update screen size on change
+workspace.CurrentCamera:GetPropertyChangedSignal("ViewportSize"):Connect(function()
+    SCREEN_SIZE = workspace.CurrentCamera.ViewportSize
+end)
 
 -- ============================================================
--- UTILITY MODULE
+-- SOUNDS
+-- ============================================================
+local Sounds = {
+    Click = "rbxassetid://6895079853",
+    Toggle_On = "rbxassetid://6895079853",
+    Toggle_Off = "rbxassetid://6895079853",
+    Notification = "rbxassetid://4590662766",
+    Open = "rbxassetid://6895079853",
+    Close = "rbxassetid://6895079853",
+    Slider = "rbxassetid://6895079853",
+    Expand = "rbxassetid://6895079853",
+    Welcome = "rbxassetid://4590662766",
+    Error = "rbxassetid://4590657391",
+    Success = "rbxassetid://4590662766",
+}
+
+-- ============================================================
+-- THEME
+-- ============================================================
+local Theme = {
+    Background = Color3.fromRGB(18, 18, 28),
+    CategoryHeader = Color3.fromRGB(25, 25, 40),
+    ModuleBackground = Color3.fromRGB(22, 22, 35),
+    ModuleHover = Color3.fromRGB(32, 32, 50),
+    ModuleEnabled = Color3.fromRGB(28, 28, 44),
+    ElementBackground = Color3.fromRGB(28, 28, 42),
+    ElementBorder = Color3.fromRGB(45, 45, 65),
+    TextPrimary = Color3.fromRGB(235, 235, 245),
+    TextSecondary = Color3.fromRGB(155, 155, 175),
+    TextDim = Color3.fromRGB(95, 95, 115),
+    SliderBackground = Color3.fromRGB(38, 38, 55),
+    ToggleOff = Color3.fromRGB(50, 50, 68),
+    Separator = Color3.fromRGB(40, 40, 58),
+    Shadow = Color3.fromRGB(0, 0, 0),
+    Notification = Color3.fromRGB(22, 22, 35),
+    NotifSuccess = Color3.fromRGB(40, 200, 120),
+    NotifError = Color3.fromRGB(255, 70, 70),
+    NotifInfo = Color3.fromRGB(67, 160, 255),
+    NotifWarn = Color3.fromRGB(255, 180, 40),
+    MenuButton = Color3.fromRGB(28, 28, 44),
+    MenuButtonHover = Color3.fromRGB(38, 38, 58),
+}
+
+-- ============================================================
+-- UTILITY
 -- ============================================================
 local Utility = {}
 
@@ -81,165 +142,149 @@ function Utility.Create(className, properties, children)
     return inst
 end
 
-function Utility.Tween(instance, tweenInfo, properties)
-    local tween = TweenService:Create(instance, tweenInfo, properties)
+function Utility.Tween(instance, duration, properties, easingStyle, easingDir, callback)
+    easingStyle = easingStyle or Enum.EasingStyle.Quart
+    easingDir = easingDir or Enum.EasingDirection.Out
+    local tween = TweenService:Create(instance, TweenInfo.new(duration, easingStyle, easingDir), properties)
     tween:Play()
+    if callback then
+        tween.Completed:Connect(callback)
+    end
     return tween
 end
 
-function Utility.QuickTween(instance, duration, properties, easingStyle, easingDir)
-    easingStyle = easingStyle or Enum.EasingStyle.Quart
-    easingDir = easingDir or Enum.EasingDirection.Out
-    return Utility.Tween(instance, TweenInfo.new(duration, easingStyle, easingDir), properties)
+function Utility.Spring(instance, duration, properties)
+    return Utility.Tween(instance, duration, properties, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
 end
 
-function Utility.Ripple(button, x, y)
-    local absSize = button.AbsoluteSize
-    local absPos = button.AbsolutePosition
-    local maxDist = math.max(
-        (Vector2.new(x, y) - absPos).Magnitude,
-        (Vector2.new(x, y) - (absPos + absSize)).Magnitude,
-        (Vector2.new(x, y) - (absPos + Vector2.new(absSize.X, 0))).Magnitude,
-        (Vector2.new(x, y) - (absPos + Vector2.new(0, absSize.Y))).Magnitude
-    )
-    local ripple = Utility.Create("Frame", {
-        Name = "Ripple",
-        AnchorPoint = Vector2.new(0.5, 0.5),
-        Position = UDim2.new(0, x - absPos.X, 0, y - absPos.Y),
-        Size = UDim2.new(0, 0, 0, 0),
-        BackgroundColor3 = Color3.fromRGB(255, 255, 255),
-        BackgroundTransparency = 0.7,
-        BorderSizePixel = 0,
-        ZIndex = button.ZIndex + 5,
-        Parent = button,
-    })
-    Utility.Create("UICorner", { CornerRadius = UDim.new(1, 0), Parent = ripple })
-    local targetSize = UDim2.new(0, maxDist * 2, 0, maxDist * 2)
-    Utility.QuickTween(ripple, 0.4, { Size = targetSize, BackgroundTransparency = 1 })
-    task.delay(0.45, function()
-        ripple:Destroy()
-    end)
+function Utility.Bounce(instance, duration, properties)
+    return Utility.Tween(instance, duration, properties, Enum.EasingStyle.Bounce, Enum.EasingDirection.Out)
 end
 
-function Utility.PlaySound(soundId, volume)
+function Utility.Elastic(instance, duration, properties)
+    return Utility.Tween(instance, duration, properties, Enum.EasingStyle.Elastic, Enum.EasingDirection.Out)
+end
+
+function Utility.SmoothIn(instance, duration, properties)
+    return Utility.Tween(instance, duration, properties, Enum.EasingStyle.Exponential, Enum.EasingDirection.Out)
+end
+
+function Utility.PlaySound(soundId, volume, pitch)
     if not Library.SoundEnabled then return end
     pcall(function()
         local sound = Instance.new("Sound")
-        sound.SoundId = soundId or "rbxassetid://6895079853"
-        sound.Volume = volume or 0.5
-        sound.PlayOnRemove = false
+        sound.SoundId = soundId
+        sound.Volume = volume or 0.4
+        sound.PlaybackSpeed = pitch or 1
+        sound.RollOffMode = Enum.RollOffMode.InverseTapered
         sound.Parent = SoundService
         sound:Play()
-        task.delay(sound.TimeLength + 0.2, function()
+        sound.Ended:Connect(function()
             sound:Destroy()
         end)
     end)
 end
 
 function Utility.ClickSound()
-    Utility.PlaySound("rbxassetid://6895079853", 0.3)
+    Utility.PlaySound(Sounds.Click, 0.3, 1.1 + math.random() * 0.2)
 end
 
-function Utility.ToggleSound(state)
-    if state then
-        Utility.PlaySound("rbxassetid://6895079853", 0.35)
+function Utility.ToggleOnSound()
+    Utility.PlaySound(Sounds.Toggle_On, 0.35, 1.15)
+end
+
+function Utility.ToggleOffSound()
+    Utility.PlaySound(Sounds.Toggle_Off, 0.25, 0.85)
+end
+
+function Utility.SliderSound()
+    Utility.PlaySound(Sounds.Slider, 0.15, 1.3 + math.random() * 0.3)
+end
+
+function Utility.ExpandSound()
+    Utility.PlaySound(Sounds.Expand, 0.25, 1.0)
+end
+
+function Utility.NotifSound(type_)
+    if type_ == "error" then
+        Utility.PlaySound(Sounds.Error, 0.4, 0.9)
+    elseif type_ == "success" then
+        Utility.PlaySound(Sounds.Success, 0.4, 1.1)
     else
-        Utility.PlaySound("rbxassetid://6895079853", 0.25)
+        Utility.PlaySound(Sounds.Notification, 0.35, 1.0)
     end
 end
 
-function Utility.Lerp(a, b, t)
-    return a + (b - a) * t
+function Utility.Ripple(parent, x, y)
+    local absPos = parent.AbsolutePosition
+    local absSize = parent.AbsoluteSize
+    local maxDist = math.max(
+        (Vector2.new(x, y) - absPos).Magnitude,
+        (Vector2.new(x, y) - (absPos + absSize)).Magnitude,
+        (Vector2.new(x, y) - (absPos + Vector2.new(absSize.X, 0))).Magnitude,
+        (Vector2.new(x, y) - (absPos + Vector2.new(0, absSize.Y))).Magnitude
+    ) * 1.2
+    local ripple = Utility.Create("Frame", {
+        Name = "Ripple",
+        AnchorPoint = Vector2.new(0.5, 0.5),
+        Position = UDim2.new(0, x - absPos.X, 0, y - absPos.Y),
+        Size = UDim2.new(0, 0, 0, 0),
+        BackgroundColor3 = Color3.fromRGB(255, 255, 255),
+        BackgroundTransparency = 0.82,
+        BorderSizePixel = 0,
+        ZIndex = parent.ZIndex + 10,
+        Parent = parent,
+    })
+    Utility.Create("UICorner", { CornerRadius = UDim.new(1, 0), Parent = ripple })
+    local targetSize = UDim2.new(0, maxDist * 2, 0, maxDist * 2)
+    Utility.Tween(ripple, 0.45, { Size = targetSize, BackgroundTransparency = 1 })
+    task.delay(0.5, function()
+        pcall(function() ripple:Destroy() end)
+    end)
 end
 
+function Utility.Lerp(a, b, t) return a + (b - a) * t end
+
 function Utility.LerpColor(c1, c2, t)
-    return Color3.new(
-        Utility.Lerp(c1.R, c2.R, t),
-        Utility.Lerp(c1.G, c2.G, t),
-        Utility.Lerp(c1.B, c2.B, t)
-    )
+    return Color3.new(Utility.Lerp(c1.R, c2.R, t), Utility.Lerp(c1.G, c2.G, t), Utility.Lerp(c1.B, c2.B, t))
 end
 
 function Utility.Darken(color, factor)
-    factor = factor or 0.4
+    factor = factor or 0.35
     return Color3.new(color.R * factor, color.G * factor, color.B * factor)
 end
 
-function Utility.RoundNumber(num, decimals)
-    local mult = 10 ^ (decimals or 0)
+function Utility.RoundNum(num, dec)
+    local mult = 10 ^ (dec or 0)
     return math.floor(num * mult + 0.5) / mult
 end
 
-function Utility.FormatTime(seconds)
-    local h = math.floor(seconds / 3600)
-    local m = math.floor((seconds % 3600) / 60)
-    local s = math.floor(seconds % 60)
-    return string.format("%02d:%02d:%02d", h, m, s)
-end
-
-function Utility.DeepCopy(orig)
-    local copy = {}
-    for k, v in pairs(orig) do
-        if type(v) == "table" then
-            copy[k] = Utility.DeepCopy(v)
-        else
-            copy[k] = v
-        end
-    end
-    return copy
+function Utility.FormatTime(sec)
+    return string.format("%02d:%02d:%02d", math.floor(sec/3600), math.floor((sec%3600)/60), math.floor(sec%60))
 end
 
 -- ============================================================
--- THEME / COLORS
+-- ACCENT COLOR ENGINE
 -- ============================================================
-local Theme = {
-    Background = Color3.fromRGB(20, 20, 30),
-    CategoryHeader = Color3.fromRGB(30, 30, 45),
-    ModuleBackground = Color3.fromRGB(25, 25, 38),
-    ModuleHover = Color3.fromRGB(35, 35, 52),
-    ElementBackground = Color3.fromRGB(32, 32, 48),
-    ElementBorder = Color3.fromRGB(50, 50, 70),
-    TextPrimary = Color3.fromRGB(230, 230, 240),
-    TextSecondary = Color3.fromRGB(160, 160, 180),
-    TextDim = Color3.fromRGB(100, 100, 120),
-    SliderBackground = Color3.fromRGB(40, 40, 58),
-    ToggleOff = Color3.fromRGB(55, 55, 75),
-    Separator = Color3.fromRGB(45, 45, 65),
-    Shadow = Color3.fromRGB(0, 0, 0),
-    Watermark = Color3.fromRGB(15, 15, 22),
-}
-
--- ============================================================
--- ACCENT COLOR ENGINE (task.spawn coroutines)
--- ============================================================
-local AccentEngine = {}
-AccentEngine.Running = true
+local AccentEngine = { Running = true }
 
 function AccentEngine:Start()
-    -- Main accent color computation loop
     local co = task.spawn(function()
         while AccentEngine.Running do
-            local dt = os.clock()
-            local speed = Library.DynamicSpeed
+            local t = os.clock()
+            local spd = Library.DynamicSpeed
 
             if Library.ColorMode == "Static" then
                 Library.CurrentAccent = Library.AccentColor
             elseif Library.ColorMode == "Breathing" then
-                -- Sine wave between accent and its dark version
-                local breathVal = (math.sin(dt * speed * 2) + 1) / 2 -- 0 to 1
-                local darkColor = Utility.Darken(Library.AccentColor, 0.35)
-                Library.CurrentAccent = Utility.LerpColor(darkColor, Library.AccentColor, breathVal)
+                local breath = (math.sin(t * spd * 2) + 1) / 2
+                Library.CurrentAccent = Utility.LerpColor(Utility.Darken(Library.AccentColor, 0.3), Library.AccentColor, breath)
             elseif Library.ColorMode == "Rainbow" then
-                -- Full HSV hue cycle
-                local hue = (dt * speed * 0.08) % 1
-                Library.CurrentAccent = Color3.fromHSV(hue, 0.75, 1)
+                Library.CurrentAccent = Color3.fromHSV((t * spd * 0.08) % 1, 0.75, 1)
             elseif Library.ColorMode == "Gradient" then
-                -- For gradient mode, the CurrentAccent is still used for non-gradient elements
-                local hue1 = (dt * speed * 0.06) % 1
-                Library.CurrentAccent = Color3.fromHSV(hue1, 0.7, 1)
+                Library.CurrentAccent = Color3.fromHSV((t * spd * 0.06) % 1, 0.7, 1)
             end
 
-            -- Update all registered accent objects
             for _, obj in pairs(Library.AccentObjects) do
                 if obj and obj.Instance and obj.Instance.Parent then
                     pcall(function()
@@ -250,23 +295,21 @@ function AccentEngine:Start()
                 end
             end
 
-            -- Update gradient objects
             if Library.ColorMode == "Gradient" then
                 for _, gObj in pairs(Library.AccentGradients) do
                     if gObj and gObj.Gradient and gObj.Gradient.Parent then
                         pcall(function()
-                            local hue1 = (dt * speed * 0.06) % 1
-                            local hue2 = (hue1 + 0.35) % 1
+                            local h1 = (t * spd * 0.06) % 1
+                            local h2 = (h1 + 0.35) % 1
                             gObj.Gradient.Color = ColorSequence.new({
-                                ColorSequenceKeypoint.new(0, Color3.fromHSV(hue1, 0.75, 1)),
-                                ColorSequenceKeypoint.new(1, Color3.fromHSV(hue2, 0.75, 1)),
+                                ColorSequenceKeypoint.new(0, Color3.fromHSV(h1, 0.75, 1)),
+                                ColorSequenceKeypoint.new(1, Color3.fromHSV(h2, 0.75, 1)),
                             })
-                            gObj.Gradient.Rotation = (dt * speed * 40) % 360
+                            gObj.Gradient.Rotation = (t * spd * 40) % 360
                         end)
                     end
                 end
             else
-                -- Non-gradient mode: set all gradients to solid accent
                 for _, gObj in pairs(Library.AccentGradients) do
                     if gObj and gObj.Gradient and gObj.Gradient.Parent then
                         pcall(function()
@@ -277,7 +320,7 @@ function AccentEngine:Start()
                 end
             end
 
-            task.wait(1 / 60)
+            task.wait(1/60)
         end
     end)
     table.insert(Library.Coroutines, co)
@@ -287,7 +330,7 @@ function AccentEngine:Stop()
     AccentEngine.Running = false
 end
 
-function AccentEngine:RegisterAccent(instance, property)
+function AccentEngine:Register(instance, property)
     local id = #Library.AccentObjects + 1
     Library.AccentObjects[id] = { Instance = instance, Property = property }
     return id
@@ -300,193 +343,352 @@ function AccentEngine:RegisterGradient(gradientInstance)
 end
 
 -- ============================================================
--- DRAG SYSTEM (Cross-Platform, LongPress for mobile)
+-- DRAG SYSTEM (Cross-platform, long-press for mobile)
 -- ============================================================
 local DragSystem = {}
 
-function DragSystem:MakeDraggable(frame, handle, onDragStart, onDragEnd)
+function DragSystem:MakeDraggable(frame, handle)
     handle = handle or frame
     local dragging = false
-    local dragInput = nil
-    local dragStart = nil
-    local startPos = nil
+    local dragStart, startPos
     local longPressActive = false
-    local longPressThreshold = 0.25 -- seconds for mobile long press
+    local LONG_PRESS_TIME = 0.2
 
-    -- PC: standard mouse drag
-    local function beginDrag(inputObj)
+    local function beginDrag(pos)
         dragging = true
-        dragStart = inputObj.Position
+        dragStart = pos
         startPos = frame.Position
-        if onDragStart then pcall(onDragStart) end
     end
 
-    local function updateDrag(inputObj)
+    local function updateDrag(pos)
         if not dragging then return end
-        local delta = inputObj.Position - dragStart
-        local newPos = UDim2.new(
-            startPos.X.Scale,
-            startPos.X.Offset + delta.X,
-            startPos.Y.Scale,
-            startPos.Y.Offset + delta.Y
-        )
-        -- Smooth drag with tween
-        Utility.QuickTween(frame, 0.08, { Position = newPos }, Enum.EasingStyle.Linear)
+        local delta = pos - dragStart
+        local newX = math.clamp(startPos.X.Offset + delta.X, 0, SCREEN_SIZE.X - frame.AbsoluteSize.X)
+        local newY = math.clamp(startPos.Y.Offset + delta.Y, 0, SCREEN_SIZE.Y - frame.AbsoluteSize.Y)
+        Utility.Tween(frame, 0.06, {
+            Position = UDim2.new(0, newX, 0, newY)
+        }, Enum.EasingStyle.Linear)
     end
 
     local function endDrag()
-        if dragging then
-            dragging = false
-            if onDragEnd then pcall(onDragEnd) end
-        end
+        dragging = false
         longPressActive = false
     end
 
-    -- Mouse (PC)
-    local conn1 = handle.InputBegan:Connect(function(input)
+    -- Mouse
+    local c1 = handle.InputBegan:Connect(function(input)
         if input.UserInputType == Enum.UserInputType.MouseButton1 then
-            beginDrag(input)
+            beginDrag(input.Position)
+        end
+    end)
+    local c2 = handle.InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then endDrag() end
+    end)
+    local c3 = UserInputService.InputChanged:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseMovement and dragging and not longPressActive then
+            updateDrag(input.Position)
         end
     end)
 
-    local conn2 = handle.InputEnded:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1 then
-            endDrag()
-        end
-    end)
-
-    local conn3 = UserInputService.InputChanged:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseMovement and dragging then
-            updateDrag(input)
-        end
-    end)
-
-    -- Touch (Mobile) - Using long press to initiate drag to avoid joystick conflict
-    local touchStartTime = 0
-    local touchStartPos = nil
-    local touchId = nil
-    local longPressCheckCo = nil
-
-    local conn4 = handle.InputBegan:Connect(function(input)
+    -- Touch
+    local touchStart, touchTime
+    local c4 = handle.InputBegan:Connect(function(input)
         if input.UserInputType == Enum.UserInputType.Touch then
-            touchStartTime = os.clock()
-            touchStartPos = input.Position
-            touchId = input
-
-            -- Long press detection coroutine
-            longPressCheckCo = task.spawn(function()
-                task.wait(longPressThreshold)
-                -- Check if finger is still roughly in same position
-                if touchId and not dragging then
+            touchStart = input.Position
+            touchTime = os.clock()
+            task.spawn(function()
+                task.wait(LONG_PRESS_TIME)
+                if touchStart and os.clock() - touchTime >= LONG_PRESS_TIME then
                     longPressActive = true
-                    dragging = true
-                    dragStart = input.Position
-                    startPos = frame.Position
-                    if onDragStart then pcall(onDragStart) end
-                    -- Haptic feedback attempt
-                    pcall(function()
-                        game:GetService("HapticService"):SetMotor(Enum.UserInputType.Gamepad1, Enum.VibrationMotor.Small, 0.2)
-                        task.wait(0.1)
-                        game:GetService("HapticService"):SetMotor(Enum.UserInputType.Gamepad1, Enum.VibrationMotor.Small, 0)
-                    end)
+                    beginDrag(touchStart)
                 end
             end)
         end
     end)
-
-    local conn5 = UserInputService.TouchMoved:Connect(function(input)
+    local c5 = UserInputService.TouchMoved:Connect(function(input)
         if dragging and longPressActive then
-            updateDrag(input)
+            updateDrag(input.Position)
         end
     end)
-
-    local conn6 = UserInputService.TouchEnded:Connect(function(input)
+    local c6 = UserInputService.TouchEnded:Connect(function()
         endDrag()
-        touchId = nil
+        touchStart = nil
     end)
 
-    -- Store connections for cleanup
-    table.insert(Library.Connections, conn1)
-    table.insert(Library.Connections, conn2)
-    table.insert(Library.Connections, conn3)
-    table.insert(Library.Connections, conn4)
-    table.insert(Library.Connections, conn5)
-    table.insert(Library.Connections, conn6)
-
-    return {
-        Disconnect = function()
-            conn1:Disconnect()
-            conn2:Disconnect()
-            conn3:Disconnect()
-            conn4:Disconnect()
-            conn5:Disconnect()
-            conn6:Disconnect()
-        end
-    }
+    for _, c in ipairs({c1,c2,c3,c4,c5,c6}) do
+        table.insert(Library.Connections, c)
+    end
 end
 
 -- ============================================================
--- SAVE / LOAD CONFIGURATION
+-- CONFIG MANAGER
 -- ============================================================
 local ConfigManager = {}
 
 function ConfigManager:Save()
-    local success, err = pcall(function()
-        local data = {}
-        for flagName, flagValue in pairs(Library.Flags) do
-            if type(flagValue) == "boolean" or type(flagValue) == "number" or type(flagValue) == "string" then
-                data[flagName] = flagValue
-            elseif typeof(flagValue) == "Color3" then
-                data[flagName] = { Type = "Color3", R = flagValue.R, G = flagValue.G, B = flagValue.B }
-            elseif typeof(flagValue) == "EnumItem" then
-                data[flagName] = { Type = "EnumItem", EnumType = tostring(flagValue.EnumType), Name = flagValue.Name }
-            elseif type(flagValue) == "table" then
-                data[flagName] = { Type = "Table", Value = flagValue }
+    pcall(function()
+        local data = { Flags = {}, WindowStates = Library.WindowStates }
+        for k, v in pairs(Library.Flags) do
+            if type(v) == "boolean" or type(v) == "number" or type(v) == "string" then
+                data.Flags[k] = v
+            elseif typeof(v) == "Color3" then
+                data.Flags[k] = { T = "C3", R = v.R, G = v.G, B = v.B }
+            elseif typeof(v) == "EnumItem" then
+                data.Flags[k] = { T = "EI", ET = tostring(v.EnumType), N = v.Name }
             end
         end
-        local json = HttpService:JSONEncode(data)
-        writefile(Library.SaveFile, json)
+        writefile(Library.SaveFile, HttpService:JSONEncode(data))
     end)
-    if not success then
-        warn("[VapeUI] Config save failed: " .. tostring(err))
-    end
 end
 
 function ConfigManager:Load()
-    local success, err = pcall(function()
+    pcall(function()
         if isfile and isfile(Library.SaveFile) then
-            local json = readfile(Library.SaveFile)
-            local data = HttpService:JSONDecode(json)
-            for flagName, flagValue in pairs(data) do
-                if type(flagValue) == "table" and flagValue.Type then
-                    if flagValue.Type == "Color3" then
-                        Library.Flags[flagName] = Color3.new(flagValue.R, flagValue.G, flagValue.B)
-                    elseif flagValue.Type == "EnumItem" then
-                        pcall(function()
-                            Library.Flags[flagName] = Enum[flagValue.EnumType][flagValue.Name]
-                        end)
-                    elseif flagValue.Type == "Table" then
-                        Library.Flags[flagName] = flagValue.Value
+            local data = HttpService:JSONDecode(readfile(Library.SaveFile))
+            if data.Flags then
+                for k, v in pairs(data.Flags) do
+                    if type(v) == "table" then
+                        if v.T == "C3" then
+                            Library.Flags[k] = Color3.new(v.R, v.G, v.B)
+                        elseif v.T == "EI" then
+                            pcall(function() Library.Flags[k] = Enum[v.ET][v.N] end)
+                        end
+                    else
+                        Library.Flags[k] = v
                     end
-                else
-                    Library.Flags[flagName] = flagValue
                 end
+            end
+            if data.WindowStates then
+                Library.WindowStates = data.WindowStates
             end
         end
     end)
-    if not success then
-        warn("[VapeUI] Config load failed: " .. tostring(err))
-    end
 end
 
-function ConfigManager:AutoSaveCheck()
-    if Library.AutoSave then
-        ConfigManager:Save()
+function ConfigManager:AutoCheck()
+    if Library.AutoSave then ConfigManager:Save() end
+end
+
+-- ============================================================
+-- NOTIFICATION SYSTEM
+-- ============================================================
+function Library:Notify(info)
+    info = info or {}
+    local title = info.Title or "Notification"
+    local content = info.Content or ""
+    local duration = info.Duration or 3.5
+    local type_ = info.Type or "info" -- info, success, error, warn
+
+    local typeColors = {
+        info = Theme.NotifInfo,
+        success = Theme.NotifSuccess,
+        error = Theme.NotifError,
+        warn = Theme.NotifWarn,
+    }
+    local typeIcons = {
+        info = "ℹ",
+        success = "✓",
+        error = "✕",
+        warn = "⚠",
+    }
+
+    Utility.NotifSound(type_)
+
+    local notifColor = typeColors[type_] or Theme.NotifInfo
+    local notifIcon = typeIcons[type_] or "ℹ"
+
+    -- Calculate position based on existing notifications
+    local existingCount = #Library.NotificationQueue
+    local yOffset = 10 + existingCount * (65 * SCALE + 8)
+
+    local notifWidth = math.clamp(280 * SCALE, 240, 380)
+    local notifHeight = 58 * SCALE
+
+    local notif = Utility.Create("Frame", {
+        Name = "Notification",
+        AnchorPoint = Vector2.new(1, 0),
+        Position = UDim2.new(1, notifWidth + 20, 0, yOffset),
+        Size = UDim2.new(0, notifWidth, 0, notifHeight),
+        BackgroundColor3 = Theme.Notification,
+        BackgroundTransparency = 0.05,
+        BorderSizePixel = 0,
+        ZIndex = 500,
+        ClipsDescendants = true,
+        Parent = Library.ScreenGui,
+    })
+    Utility.Create("UICorner", { CornerRadius = UDim.new(0, 8), Parent = notif })
+    Utility.Create("UIStroke", {
+        Color = notifColor,
+        Thickness = 1,
+        Transparency = 0.4,
+        Parent = notif,
+    })
+
+    -- Shadow
+    Utility.Create("ImageLabel", {
+        Name = "Shadow",
+        AnchorPoint = Vector2.new(0.5, 0.5),
+        Position = UDim2.new(0.5, 0, 0.5, 4),
+        Size = UDim2.new(1, 30, 1, 30),
+        BackgroundTransparency = 1,
+        Image = "rbxassetid://6015897843",
+        ImageColor3 = Color3.new(0, 0, 0),
+        ImageTransparency = 0.5,
+        ScaleType = Enum.ScaleType.Slice,
+        SliceCenter = Rect.new(49, 49, 450, 450),
+        ZIndex = 499,
+        Parent = notif,
+    })
+
+    -- Accent bar top
+    local topBar = Utility.Create("Frame", {
+        Size = UDim2.new(1, 0, 0, 2.5),
+        BackgroundColor3 = notifColor,
+        BorderSizePixel = 0,
+        ZIndex = 502,
+        Parent = notif,
+    })
+    Utility.Create("UICorner", { CornerRadius = UDim.new(0, 8), Parent = topBar })
+
+    -- Progress bar (bottom)
+    local progressBg = Utility.Create("Frame", {
+        AnchorPoint = Vector2.new(0, 1),
+        Position = UDim2.new(0, 0, 1, 0),
+        Size = UDim2.new(1, 0, 0, 3),
+        BackgroundColor3 = Theme.SliderBackground,
+        BackgroundTransparency = 0.5,
+        BorderSizePixel = 0,
+        ZIndex = 501,
+        Parent = notif,
+    })
+    local progressFill = Utility.Create("Frame", {
+        Size = UDim2.new(1, 0, 1, 0),
+        BackgroundColor3 = notifColor,
+        BorderSizePixel = 0,
+        ZIndex = 502,
+        Parent = progressBg,
+    })
+
+    -- Icon
+    Utility.Create("TextLabel", {
+        Size = UDim2.new(0, 30 * SCALE, 0, 30 * SCALE),
+        Position = UDim2.new(0, 10, 0.5, -15 * SCALE),
+        BackgroundTransparency = 1,
+        Font = Enum.Font.GothamBold,
+        TextSize = 18 * SCALE,
+        TextColor3 = notifColor,
+        Text = notifIcon,
+        ZIndex = 502,
+        Parent = notif,
+    })
+
+    -- Title
+    Utility.Create("TextLabel", {
+        Size = UDim2.new(1, -50 * SCALE, 0, 18 * SCALE),
+        Position = UDim2.new(0, 42 * SCALE, 0, 7),
+        BackgroundTransparency = 1,
+        Font = Enum.Font.GothamBold,
+        TextSize = 12 * SCALE,
+        TextColor3 = Theme.TextPrimary,
+        Text = title,
+        TextXAlignment = Enum.TextXAlignment.Left,
+        TextTruncate = Enum.TextTruncate.AtEnd,
+        ZIndex = 502,
+        Parent = notif,
+    })
+
+    -- Content
+    Utility.Create("TextLabel", {
+        Size = UDim2.new(1, -50 * SCALE, 0, 20 * SCALE),
+        Position = UDim2.new(0, 42 * SCALE, 0, 26 * SCALE),
+        BackgroundTransparency = 1,
+        Font = Enum.Font.Gotham,
+        TextSize = 10.5 * SCALE,
+        TextColor3 = Theme.TextSecondary,
+        Text = content,
+        TextXAlignment = Enum.TextXAlignment.Left,
+        TextTruncate = Enum.TextTruncate.AtEnd,
+        TextWrapped = true,
+        ZIndex = 502,
+        Parent = notif,
+    })
+
+    table.insert(Library.NotificationQueue, notif)
+
+    -- Slide in animation
+    Utility.Spring(notif, 0.5, {
+        Position = UDim2.new(1, -10, 0, yOffset)
+    })
+
+    -- Progress bar countdown
+    Utility.Tween(progressFill, duration, { Size = UDim2.new(0, 0, 1, 0) }, Enum.EasingStyle.Linear)
+
+    -- Auto dismiss
+    task.delay(duration, function()
+        -- Slide out
+        Utility.Tween(notif, 0.35, {
+            Position = UDim2.new(1, notifWidth + 20, 0, notif.Position.Y.Offset)
+        }, Enum.EasingStyle.Quart, Enum.EasingDirection.In, function()
+            -- Remove from queue and reposition remaining
+            for i, n in ipairs(Library.NotificationQueue) do
+                if n == notif then
+                    table.remove(Library.NotificationQueue, i)
+                    break
+                end
+            end
+            pcall(function() notif:Destroy() end)
+
+            -- Reposition remaining notifications
+            for i, n in ipairs(Library.NotificationQueue) do
+                if n and n.Parent then
+                    local targetY = 10 + (i - 1) * (65 * SCALE + 8)
+                    Utility.Spring(n, 0.35, {
+                        Position = UDim2.new(1, -10, 0, targetY)
+                    })
+                end
+            end
+        end)
+    end)
+
+    return notif
+end
+
+-- ============================================================
+-- SMART WINDOW POSITIONING
+-- ============================================================
+function Library:CalculateWindowPosition(index)
+    local padding = WINDOW_GAP
+    local startX = padding
+    local startY = TOP_OFFSET + padding
+    local maxCols = math.floor((SCREEN_SIZE.X - padding) / (WINDOW_WIDTH + padding))
+    maxCols = math.max(maxCols, 1)
+
+    local col = ((index - 1) % maxCols)
+    local row = math.floor((index - 1) / maxCols)
+
+    local x = startX + col * (WINDOW_WIDTH + padding)
+    local y = startY + row * (350 * SCALE + padding)
+
+    -- Ensure within screen
+    x = math.clamp(x, padding, SCREEN_SIZE.X - WINDOW_WIDTH - padding)
+    y = math.clamp(y, startY, SCREEN_SIZE.Y - 100)
+
+    return UDim2.new(0, x, 0, y)
+end
+
+function Library:RepositionWindows()
+    local visIndex = 0
+    for _, cat in ipairs(Library.Categories) do
+        if cat.Frame and cat.Frame.Visible then
+            visIndex = visIndex + 1
+            local pos = Library:CalculateWindowPosition(visIndex)
+            Utility.Spring(cat.Frame, 0.4, { Position = pos })
+        end
     end
 end
 
 -- ============================================================
--- MAIN UI CONSTRUCTION
+-- INIT
 -- ============================================================
 function Library:Init(settings)
     settings = settings or {}
@@ -496,17 +698,14 @@ function Library:Init(settings)
     Library.CurrentAccent = Library.AccentColor
     Library.Title = settings.Title or "Vape Client"
 
-    -- Attempt to load saved config
     ConfigManager:Load()
 
-    -- Destroy previous UI if exists
     pcall(function()
         if CoreGui:FindFirstChild("VapeUILibrary") then
             CoreGui:FindFirstChild("VapeUILibrary"):Destroy()
         end
     end)
 
-    -- ScreenGui
     Library.ScreenGui = Utility.Create("ScreenGui", {
         Name = "VapeUILibrary",
         ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
@@ -516,80 +715,150 @@ function Library:Init(settings)
         Parent = CoreGui,
     })
 
-    -- Main container (holds all categories)
     Library.MainFrame = Utility.Create("Frame", {
         Name = "MainFrame",
         BackgroundTransparency = 1,
         Size = UDim2.new(1, 0, 1, 0),
-        Position = UDim2.new(0, 0, 0, 0),
         Parent = Library.ScreenGui,
     })
 
-    -- ========================================================
-    -- WATERMARK (FPS / Ping / Runtime)
-    -- ========================================================
+    -- ====================
+    -- MAIN MENU BAR (Top)
+    -- ====================
+    local menuBarHeight = 32 * SCALE
+    Library.MenuBar = Utility.Create("Frame", {
+        Name = "MenuBar",
+        Position = UDim2.new(0, 0, 0, -menuBarHeight),
+        Size = UDim2.new(1, 0, 0, menuBarHeight),
+        BackgroundColor3 = Theme.CategoryHeader,
+        BackgroundTransparency = 0.02,
+        BorderSizePixel = 0,
+        ZIndex = 80,
+        Parent = Library.ScreenGui,
+    })
+    Utility.Create("UIStroke", {
+        Color = Theme.ElementBorder,
+        Thickness = 1,
+        Transparency = 0.5,
+        ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
+        Parent = Library.MenuBar,
+    })
+
+    -- Menu accent bar
+    local menuAccent = Utility.Create("Frame", {
+        Size = UDim2.new(1, 0, 0, 2),
+        Position = UDim2.new(0, 0, 1, -2),
+        BackgroundColor3 = Library.CurrentAccent,
+        BorderSizePixel = 0,
+        ZIndex = 82,
+        Parent = Library.MenuBar,
+    })
+    local menuAccentGrad = Utility.Create("UIGradient", {
+        Color = ColorSequence.new(Library.CurrentAccent, Library.CurrentAccent),
+        Parent = menuAccent,
+    })
+    AccentEngine:Register(menuAccent, "BackgroundColor3")
+    AccentEngine:RegisterGradient(menuAccentGrad)
+
+    -- Title in menu bar
+    Library.MenuTitle = Utility.Create("TextLabel", {
+        Name = "Title",
+        Size = UDim2.new(0, 120 * SCALE, 1, 0),
+        Position = UDim2.new(0, 8, 0, 0),
+        BackgroundTransparency = 1,
+        Font = Enum.Font.GothamBold,
+        TextSize = 13 * SCALE,
+        TextColor3 = Library.CurrentAccent,
+        Text = Library.Title,
+        TextXAlignment = Enum.TextXAlignment.Left,
+        ZIndex = 82,
+        Parent = Library.MenuBar,
+    })
+    AccentEngine:Register(Library.MenuTitle, "TextColor3")
+
+    -- Menu button container
+    Library.MenuButtonContainer = Utility.Create("Frame", {
+        Name = "Buttons",
+        Size = UDim2.new(1, -130 * SCALE, 1, -4),
+        Position = UDim2.new(0, 125 * SCALE, 0, 2),
+        BackgroundTransparency = 1,
+        ZIndex = 81,
+        ClipsDescendants = true,
+        Parent = Library.MenuBar,
+    })
+
+    -- If mobile, use ScrollingFrame for buttons
+    if IS_MOBILE then
+        local scroll = Utility.Create("ScrollingFrame", {
+            Size = UDim2.new(1, 0, 1, 0),
+            BackgroundTransparency = 1,
+            ScrollBarThickness = 0,
+            CanvasSize = UDim2.new(0, 0, 0, 0),
+            AutomaticCanvasSize = Enum.AutomaticSize.X,
+            ScrollingDirection = Enum.ScrollingDirection.X,
+            Parent = Library.MenuButtonContainer,
+        })
+        Utility.Create("UIListLayout", {
+            FillDirection = Enum.FillDirection.Horizontal,
+            SortOrder = Enum.SortOrder.LayoutOrder,
+            Padding = UDim.new(0, 3),
+            VerticalAlignment = Enum.VerticalAlignment.Center,
+            Parent = scroll,
+        })
+        Library._MenuBtnParent = scroll
+    else
+        Utility.Create("UIListLayout", {
+            FillDirection = Enum.FillDirection.Horizontal,
+            SortOrder = Enum.SortOrder.LayoutOrder,
+            Padding = UDim.new(0, 3),
+            VerticalAlignment = Enum.VerticalAlignment.Center,
+            Parent = Library.MenuButtonContainer,
+        })
+        Library._MenuBtnParent = Library.MenuButtonContainer
+    end
+
+    -- Animate menu bar in
+    Utility.Spring(Library.MenuBar, 0.6, { Position = UDim2.new(0, 0, 0, 0) })
+
+    -- ====================
+    -- WATERMARK
+    -- ====================
     Library.Watermark = Utility.Create("Frame", {
         Name = "Watermark",
         AnchorPoint = Vector2.new(1, 0),
-        Position = UDim2.new(1, -10, 0, 10),
-        Size = UDim2.new(0, 220 * SCALE_FACTOR, 0, 28 * SCALE_FACTOR),
-        BackgroundColor3 = Theme.Watermark,
-        BackgroundTransparency = 0.15,
+        Position = UDim2.new(1, -10, 0, menuBarHeight + 5),
+        Size = UDim2.new(0, 210 * SCALE, 0, 24 * SCALE),
+        BackgroundColor3 = Theme.Notification,
+        BackgroundTransparency = 0.1,
         BorderSizePixel = 0,
-        Visible = Library.WatermarkEnabled,
-        ZIndex = 100,
+        Visible = false,
+        ZIndex = 90,
         Parent = Library.ScreenGui,
     })
     Utility.Create("UICorner", { CornerRadius = UDim.new(0, 5), Parent = Library.Watermark })
-    Utility.Create("UIStroke", {
-        Color = Library.CurrentAccent,
-        Thickness = 1.2,
-        Transparency = 0.3,
-        Parent = Library.Watermark,
-    })
-    local wmAccentBar = Utility.Create("Frame", {
-        Name = "AccentBar",
-        Size = UDim2.new(1, 0, 0, 2),
-        Position = UDim2.new(0, 0, 0, 0),
-        BackgroundColor3 = Library.CurrentAccent,
-        BorderSizePixel = 0,
-        ZIndex = 101,
-        Parent = Library.Watermark,
-    })
-    Utility.Create("UICorner", { CornerRadius = UDim.new(0, 5), Parent = wmAccentBar })
-    local wmGradient = Utility.Create("UIGradient", {
-        Color = ColorSequence.new(Library.CurrentAccent, Library.CurrentAccent),
-        Parent = wmAccentBar,
-    })
-    AccentEngine:RegisterAccent(wmAccentBar, "BackgroundColor3")
-    AccentEngine:RegisterGradient(wmGradient)
+    Utility.Create("UIStroke", { Color = Library.CurrentAccent, Thickness = 1, Transparency = 0.5, Parent = Library.Watermark })
 
     Library.WatermarkLabel = Utility.Create("TextLabel", {
-        Name = "Info",
-        Size = UDim2.new(1, -10, 1, 0),
-        Position = UDim2.new(0, 5, 0, 0),
+        Size = UDim2.new(1, -8, 1, 0),
+        Position = UDim2.new(0, 4, 0, 0),
         BackgroundTransparency = 1,
-        Font = Enum.Font.GothamMedium,
-        TextSize = 12 * SCALE_FACTOR,
+        Font = Enum.Font.Code,
+        TextSize = 10.5 * SCALE,
         TextColor3 = Theme.TextPrimary,
+        Text = "",
         TextXAlignment = Enum.TextXAlignment.Left,
-        Text = Library.Title .. " | FPS: -- | Ping: -- | 00:00:00",
-        ZIndex = 102,
+        ZIndex = 91,
         Parent = Library.Watermark,
     })
 
-    -- Watermark update loop
     local wmCo = task.spawn(function()
         while AccentEngine.Running do
-            if Library.WatermarkEnabled and Library.Watermark then
+            if Library.WatermarkEnabled and Library.Watermark.Visible then
                 pcall(function()
                     local fps = math.floor(1 / RunService.RenderStepped:Wait())
                     local ping = math.floor(LocalPlayer:GetNetworkPing() * 1000)
-                    local runtime = Utility.FormatTime(os.clock() - Library.StartTime)
-                    Library.WatermarkLabel.Text = string.format(
-                        "%s | FPS: %d | Ping: %dms | %s",
-                        Library.Title, fps, ping, runtime
-                    )
+                    local rt = Utility.FormatTime(os.clock() - Library.StartTime)
+                    Library.WatermarkLabel.Text = string.format("%s | %dFPS | %dms | %s", Library.Title, fps, ping, rt)
                 end)
             else
                 task.wait(0.5)
@@ -598,17 +867,17 @@ function Library:Init(settings)
     end)
     table.insert(Library.Coroutines, wmCo)
 
-    -- ========================================================
-    -- ARRAYLIST (Side module list)
-    -- ========================================================
+    -- ====================
+    -- ARRAYLIST
+    -- ====================
     Library.ArrayList = Utility.Create("Frame", {
         Name = "ArrayList",
         AnchorPoint = Vector2.new(1, 0),
-        Position = UDim2.new(1, -5, 0, 45 * SCALE_FACTOR),
-        Size = UDim2.new(0, 180 * SCALE_FACTOR, 0, 0),
+        Position = UDim2.new(1, -5, 0, menuBarHeight + 32 * SCALE),
+        Size = UDim2.new(0, 160 * SCALE, 0, 0),
         BackgroundTransparency = 1,
-        Visible = Library.ArrayListEnabled,
-        ZIndex = 100,
+        Visible = false,
+        ZIndex = 90,
         Parent = Library.ScreenGui,
     })
     Utility.Create("UIListLayout", {
@@ -618,153 +887,177 @@ function Library:Init(settings)
         Parent = Library.ArrayList,
     })
 
-    -- ========================================================
-    -- MOBILE FLOATING BALL
-    -- ========================================================
-    Library.FloatingBall = Utility.Create("ImageButton", {
+    -- ====================
+    -- FLOATING BALL (Mobile)
+    -- ====================
+    Library.FloatingBall = Utility.Create("Frame", {
         Name = "FloatingBall",
         AnchorPoint = Vector2.new(0.5, 0.5),
-        Position = UDim2.new(0, 45, 0.5, 0),
-        Size = UDim2.new(0, 42, 0, 42),
+        Position = UDim2.new(0, 30, 0.5, 0),
+        Size = UDim2.new(0, 0, 0, 0),
         BackgroundColor3 = Library.CurrentAccent,
-        BackgroundTransparency = 0.35,
+        BackgroundTransparency = 0.25,
         BorderSizePixel = 0,
-        Image = "",
-        AutoButtonColor = false,
         Visible = IS_MOBILE and Library.MobileBallVisible,
-        ZIndex = 200,
+        ZIndex = 300,
         Parent = Library.ScreenGui,
     })
     Utility.Create("UICorner", { CornerRadius = UDim.new(1, 0), Parent = Library.FloatingBall })
     Utility.Create("UIStroke", {
-        Color = Color3.fromRGB(255, 255, 255),
+        Color = Color3.new(1, 1, 1),
         Thickness = 1.5,
-        Transparency = 0.5,
+        Transparency = 0.4,
         Parent = Library.FloatingBall,
     })
-    AccentEngine:RegisterAccent(Library.FloatingBall, "BackgroundColor3")
+    AccentEngine:Register(Library.FloatingBall, "BackgroundColor3")
 
-    local ballIcon = Utility.Create("TextLabel", {
-        Name = "Icon",
+    local ballLabel = Utility.Create("TextLabel", {
         Size = UDim2.new(1, 0, 1, 0),
         BackgroundTransparency = 1,
         Font = Enum.Font.GothamBold,
-        TextSize = 18,
-        TextColor3 = Color3.fromRGB(255, 255, 255),
+        TextSize = 16,
+        TextColor3 = Color3.new(1, 1, 1),
         Text = "V",
-        ZIndex = 201,
+        ZIndex = 301,
         Parent = Library.FloatingBall,
     })
 
-    -- Make floating ball draggable
+    -- Animate ball in
+    if IS_MOBILE then
+        Utility.Elastic(Library.FloatingBall, 0.7, {
+            Size = UDim2.new(0, 44, 0, 44)
+        })
+    end
+
     DragSystem:MakeDraggable(Library.FloatingBall, Library.FloatingBall)
 
-    -- Toggle UI on ball tap (short tap vs drag detection)
-    local ballDragged = false
-    local ballTouchStart = nil
-
+    -- Ball tap detection
+    local ballTouchPos = nil
     Library.FloatingBall.InputBegan:Connect(function(input)
         if input.UserInputType == Enum.UserInputType.Touch or input.UserInputType == Enum.UserInputType.MouseButton1 then
-            ballTouchStart = input.Position
+            ballTouchPos = input.Position
         end
     end)
-
     Library.FloatingBall.InputEnded:Connect(function(input)
         if input.UserInputType == Enum.UserInputType.Touch or input.UserInputType == Enum.UserInputType.MouseButton1 then
-            if ballTouchStart then
-                local dist = (input.Position - ballTouchStart).Magnitude
-                if dist < 10 then
-                    -- Short tap -> toggle UI
-                    Library:ToggleUI()
-                    Utility.ClickSound()
-                end
+            if ballTouchPos and (input.Position - ballTouchPos).Magnitude < 12 then
+                Library:ToggleUI()
+                Utility.ClickSound()
+                -- Ball pulse animation
+                Utility.Spring(Library.FloatingBall, 0.15, { Size = UDim2.new(0, 50, 0, 50) })
+                task.delay(0.15, function()
+                    Utility.Spring(Library.FloatingBall, 0.3, { Size = UDim2.new(0, 44, 0, 44) })
+                end)
             end
-            ballTouchStart = nil
+            ballTouchPos = nil
         end
     end)
 
-    -- ========================================================
-    -- PC KEYBOARD TOGGLE
-    -- ========================================================
-    local toggleConn = UserInputService.InputBegan:Connect(function(input, processed)
+    -- ====================
+    -- KEYBOARD TOGGLE
+    -- ====================
+    local tkConn = UserInputService.InputBegan:Connect(function(input, processed)
         if processed then return end
         if input.KeyCode == Library.ToggleKey then
             Library:ToggleUI()
         end
     end)
-    table.insert(Library.Connections, toggleConn)
+    table.insert(Library.Connections, tkConn)
 
-    -- Start accent engine
+    -- Start engine
     AccentEngine:Start()
-
     Library.Initialized = true
 
-    -- Build the built-in Settings category
+    -- Build settings
     Library:_BuildSettingsCategory()
+
+    -- Welcome notification
+    task.delay(0.8, function()
+        Library:Notify({
+            Title = "Welcome!",
+            Content = Library.Title .. " loaded successfully.",
+            Duration = 4,
+            Type = "success",
+        })
+        task.wait(0.5)
+        Library:Notify({
+            Title = "Controls",
+            Content = IS_MOBILE and "Tap floating ball to toggle UI." or "Press RightShift to toggle UI.",
+            Duration = 5,
+            Type = "info",
+        })
+    end)
 
     return Library
 end
 
+-- ============================================================
+-- TOGGLE UI
+-- ============================================================
 function Library:ToggleUI()
     Library.Visible = not Library.Visible
-    local targetTransparency = Library.Visible and 0 or 1
-    -- Animate all categories
-    for _, cat in ipairs(Library.Categories) do
-        if cat.Frame then
-            if Library.Visible then
+
+    if Library.Visible then
+        Utility.PlaySound(Sounds.Open, 0.3, 1.05)
+        -- Show menu bar
+        Utility.Spring(Library.MenuBar, 0.45, { Position = UDim2.new(0, 0, 0, 0) })
+        Library.MenuBar.Visible = true
+        -- Show open windows
+        for _, cat in ipairs(Library.Categories) do
+            if cat._shouldBeVisible then
                 cat.Frame.Visible = true
-                Utility.QuickTween(cat.Frame, 0.3, {
-                    BackgroundTransparency = Library.BackgroundTransparency,
-                })
-                -- Fade in all children
+                cat.Frame.BackgroundTransparency = 1
+                Utility.Spring(cat.Frame, 0.35, { BackgroundTransparency = Library.BackgroundTransparency })
+                -- Fade children
                 for _, desc in pairs(cat.Frame:GetDescendants()) do
                     pcall(function()
-                        if desc:IsA("Frame") or desc:IsA("TextLabel") or desc:IsA("TextButton") or desc:IsA("ImageButton") or desc:IsA("TextBox") then
-                            if desc.Name ~= "Ripple" then
-                                local origTrans = desc:GetAttribute("OriginalTransparency")
-                                if origTrans then
-                                    Utility.QuickTween(desc, 0.3, { BackgroundTransparency = origTrans })
-                                end
-                                if desc:IsA("TextLabel") or desc:IsA("TextButton") or desc:IsA("TextBox") then
-                                    local origTextTrans = desc:GetAttribute("OriginalTextTransparency")
-                                    if origTextTrans then
-                                        Utility.QuickTween(desc, 0.3, { TextTransparency = origTextTrans })
-                                    else
-                                        Utility.QuickTween(desc, 0.3, { TextTransparency = 0 })
-                                    end
+                        if desc:IsA("GuiObject") and desc.Name ~= "Ripple" and desc.Name ~= "Shadow" then
+                            local stored = desc:GetAttribute("_origBT")
+                            if stored then
+                                Utility.Tween(desc, 0.3, { BackgroundTransparency = stored })
+                            end
+                            if desc:IsA("TextLabel") or desc:IsA("TextButton") or desc:IsA("TextBox") then
+                                local storedTT = desc:GetAttribute("_origTT")
+                                if storedTT then
+                                    Utility.Tween(desc, 0.3, { TextTransparency = storedTT })
                                 end
                             end
                         end
                     end)
                 end
-            else
-                -- Fade out all children first, then hide
+            end
+        end
+    else
+        Utility.PlaySound(Sounds.Close, 0.25, 0.9)
+        -- Hide menu bar
+        local mbh = Library.MenuBar.AbsoluteSize.Y
+        Utility.Tween(Library.MenuBar, 0.3, { Position = UDim2.new(0, 0, 0, -mbh) }, Enum.EasingStyle.Quart, Enum.EasingDirection.In)
+        -- Hide windows
+        for _, cat in ipairs(Library.Categories) do
+            if cat.Frame.Visible then
+                cat._shouldBeVisible = true
+                -- Store original transparencies
                 for _, desc in pairs(cat.Frame:GetDescendants()) do
                     pcall(function()
-                        if desc:IsA("Frame") or desc:IsA("TextLabel") or desc:IsA("TextButton") or desc:IsA("ImageButton") or desc:IsA("TextBox") then
-                            if desc.Name ~= "Ripple" then
-                                desc:SetAttribute("OriginalTransparency", desc.BackgroundTransparency)
-                                if desc:IsA("TextLabel") or desc:IsA("TextButton") or desc:IsA("TextBox") then
-                                    desc:SetAttribute("OriginalTextTransparency", desc.TextTransparency)
-                                end
-                                Utility.QuickTween(desc, 0.25, { BackgroundTransparency = 1 })
-                                if desc:IsA("TextLabel") or desc:IsA("TextButton") or desc:IsA("TextBox") then
-                                    Utility.QuickTween(desc, 0.25, { TextTransparency = 1 })
-                                end
+                        if desc:IsA("GuiObject") and desc.Name ~= "Ripple" and desc.Name ~= "Shadow" then
+                            desc:SetAttribute("_origBT", desc.BackgroundTransparency)
+                            if desc:IsA("TextLabel") or desc:IsA("TextButton") or desc:IsA("TextBox") then
+                                desc:SetAttribute("_origTT", desc.TextTransparency)
+                                Utility.Tween(desc, 0.2, { TextTransparency = 1 })
                             end
+                            Utility.Tween(desc, 0.2, { BackgroundTransparency = 1 })
                         end
                     end)
                 end
-                task.delay(0.3, function()
-                    if not Library.Visible then
-                        cat.Frame.Visible = false
-                    end
+                Utility.Tween(cat.Frame, 0.25, { BackgroundTransparency = 1 }, nil, nil, function()
+                    if not Library.Visible then cat.Frame.Visible = false end
                 end)
+            else
+                cat._shouldBeVisible = false
             end
         end
     end
 
-    -- Watermark follows visibility unless specifically toggled
     if Library.Watermark then
         Library.Watermark.Visible = Library.Visible and Library.WatermarkEnabled
     end
@@ -773,76 +1066,72 @@ function Library:ToggleUI()
     end
 end
 
-function Library:Destroy()
-    AccentEngine:Stop()
-    for _, conn in ipairs(Library.Connections) do
-        pcall(function() conn:Disconnect() end)
-    end
-    Library.Connections = {}
-    Library.Coroutines = {}
-    Library.AccentObjects = {}
-    Library.AccentGradients = {}
-    Library.Categories = {}
-    Library.Flags = {}
-    Library.EnabledModules = {}
-    pcall(function()
-        if Library.ScreenGui then
-            Library.ScreenGui:Destroy()
-        end
-    end)
-    Library.Initialized = false
-end
-
 -- ============================================================
--- CATEGORY CREATION
+-- CATEGORY
 -- ============================================================
 local Category = {}
 Category.__index = Category
 
 function Library:CreateCategory(info)
     info = info or {}
-    local categoryName = info.Name or "Category"
-    local categoryIcon = info.Icon or ""
-    local defaultPosition = info.Position or UDim2.new(0, 30 + (#Library.Categories * (200 * SCALE_FACTOR + 15)), 0, 80)
+    local name = info.Name or "Category"
+    local icon = info.Icon or ""
+    local startVisible = false -- All categories start HIDDEN
+    if info.AutoShow then startVisible = true end
 
-    local catWidth = (info.Width or 195) * SCALE_FACTOR
-    local catHeaderHeight = 32 * SCALE_FACTOR
+    -- Check saved window state
+    if Library.WindowStates[name] ~= nil then
+        startVisible = Library.WindowStates[name]
+    end
+
+    local catWidth = WINDOW_WIDTH
+    local headerH = 30 * SCALE
 
     local cat = setmetatable({}, Category)
-    cat.Name = categoryName
+    cat.Name = name
     cat.Modules = {}
     cat.Collapsed = false
+    cat._shouldBeVisible = startVisible
+
+    -- Count visible windows for positioning
+    local visCount = 0
+    for _, c in ipairs(Library.Categories) do
+        if c.Frame and c.Frame.Visible then visCount = visCount + 1 end
+    end
+
+    local pos = info.Position or Library:CalculateWindowPosition(visCount + 1)
 
     -- Category Frame
     cat.Frame = Utility.Create("Frame", {
-        Name = "Category_" .. categoryName,
-        Position = defaultPosition,
-        Size = UDim2.new(0, catWidth, 0, catHeaderHeight),
+        Name = "Cat_" .. name,
+        Position = pos,
+        Size = UDim2.new(0, catWidth, 0, headerH),
         BackgroundColor3 = Theme.Background,
-        BackgroundTransparency = Library.BackgroundTransparency,
+        BackgroundTransparency = startVisible and Library.BackgroundTransparency or 1,
         BorderSizePixel = 0,
         ClipsDescendants = false,
+        Visible = startVisible,
         ZIndex = 10,
         Parent = Library.MainFrame,
     })
-    Utility.Create("UICorner", { CornerRadius = UDim.new(0, 8), Parent = cat.Frame })
+    Utility.Create("UICorner", { CornerRadius = UDim.new(0, 7), Parent = cat.Frame })
     Utility.Create("UIStroke", {
         Color = Theme.ElementBorder,
         Thickness = 1,
-        Transparency = 0.5,
+        Transparency = 0.55,
         Parent = cat.Frame,
     })
 
     -- Shadow
-    local shadow = Utility.Create("ImageLabel", {
+    Utility.Create("ImageLabel", {
         Name = "Shadow",
         AnchorPoint = Vector2.new(0.5, 0.5),
-        Position = UDim2.new(0.5, 0, 0.5, 4),
-        Size = UDim2.new(1, 25, 1, 25),
+        Position = UDim2.new(0.5, 0, 0.5, 3),
+        Size = UDim2.new(1, 20, 1, 20),
         BackgroundTransparency = 1,
         Image = "rbxassetid://6015897843",
         ImageColor3 = Color3.new(0, 0, 0),
-        ImageTransparency = 0.6,
+        ImageTransparency = 0.55,
         ScaleType = Enum.ScaleType.Slice,
         SliceCenter = Rect.new(49, 49, 450, 450),
         ZIndex = 9,
@@ -851,83 +1140,74 @@ function Library:CreateCategory(info)
 
     -- Accent top bar
     local accentBar = Utility.Create("Frame", {
-        Name = "AccentBar",
         Size = UDim2.new(1, 0, 0, 2.5),
-        Position = UDim2.new(0, 0, 0, 0),
         BackgroundColor3 = Library.CurrentAccent,
         BorderSizePixel = 0,
         ZIndex = 15,
         Parent = cat.Frame,
     })
-    Utility.Create("UICorner", { CornerRadius = UDim.new(0, 8), Parent = accentBar })
-    local accentGrad = Utility.Create("UIGradient", {
-        Color = ColorSequence.new(Library.CurrentAccent, Library.CurrentAccent),
-        Parent = accentBar,
-    })
-    AccentEngine:RegisterAccent(accentBar, "BackgroundColor3")
-    AccentEngine:RegisterGradient(accentGrad)
+    Utility.Create("UICorner", { CornerRadius = UDim.new(0, 7), Parent = accentBar })
+    local abGrad = Utility.Create("UIGradient", { Parent = accentBar })
+    AccentEngine:Register(accentBar, "BackgroundColor3")
+    AccentEngine:RegisterGradient(abGrad)
 
     -- Header
     local header = Utility.Create("Frame", {
         Name = "Header",
-        Size = UDim2.new(1, 0, 0, catHeaderHeight),
+        Size = UDim2.new(1, 0, 0, headerH),
         BackgroundColor3 = Theme.CategoryHeader,
-        BackgroundTransparency = 0.1,
+        BackgroundTransparency = 0.05,
         BorderSizePixel = 0,
         ZIndex = 12,
         Parent = cat.Frame,
     })
-    Utility.Create("UICorner", { CornerRadius = UDim.new(0, 8), Parent = header })
+    Utility.Create("UICorner", { CornerRadius = UDim.new(0, 7), Parent = header })
 
-    -- Category Title
-    local titleLabel = Utility.Create("TextLabel", {
-        Name = "Title",
-        Size = UDim2.new(1, -40 * SCALE_FACTOR, 1, 0),
-        Position = UDim2.new(0, 10 * SCALE_FACTOR, 0, 0),
+    Utility.Create("TextLabel", {
+        Size = UDim2.new(1, -35 * SCALE, 1, 0),
+        Position = UDim2.new(0, 10 * SCALE, 0, 0),
         BackgroundTransparency = 1,
         Font = Enum.Font.GothamBold,
-        TextSize = 13 * SCALE_FACTOR,
+        TextSize = 12.5 * SCALE,
         TextColor3 = Theme.TextPrimary,
-        Text = categoryName,
+        Text = name,
         TextXAlignment = Enum.TextXAlignment.Left,
         ZIndex = 13,
         Parent = header,
     })
 
-    -- Collapse Arrow
-    local collapseArrow = Utility.Create("TextButton", {
-        Name = "CollapseBtn",
+    local collapseBtn = Utility.Create("TextButton", {
         AnchorPoint = Vector2.new(1, 0.5),
-        Position = UDim2.new(1, -8 * SCALE_FACTOR, 0.5, 0),
-        Size = UDim2.new(0, 22 * SCALE_FACTOR, 0, 22 * SCALE_FACTOR),
+        Position = UDim2.new(1, -6 * SCALE, 0.5, 0),
+        Size = UDim2.new(0, 20 * SCALE, 0, 20 * SCALE),
         BackgroundTransparency = 1,
         Font = Enum.Font.GothamBold,
-        TextSize = 14 * SCALE_FACTOR,
+        TextSize = 12 * SCALE,
         TextColor3 = Theme.TextSecondary,
         Text = "▼",
         ZIndex = 14,
         Parent = header,
     })
 
-    -- Module container (scrollable)
+    -- Module container
     cat.ModuleContainer = Utility.Create("ScrollingFrame", {
-        Name = "ModuleContainer",
-        Position = UDim2.new(0, 0, 0, catHeaderHeight),
-        Size = UDim2.new(1, 0, 0, 0), -- will be resized dynamically
+        Name = "Modules",
+        Position = UDim2.new(0, 0, 0, headerH),
+        Size = UDim2.new(1, 0, 0, 0),
         BackgroundTransparency = 1,
         BorderSizePixel = 0,
-        ScrollBarThickness = 3,
+        ScrollBarThickness = 2,
         ScrollBarImageColor3 = Library.CurrentAccent,
-        ScrollBarImageTransparency = 0.3,
+        ScrollBarImageTransparency = 0.4,
         CanvasSize = UDim2.new(0, 0, 0, 0),
+        AutomaticCanvasSize = Enum.AutomaticSize.Y,
         ClipsDescendants = true,
         ZIndex = 11,
-        AutomaticCanvasSize = Enum.AutomaticSize.Y,
         Parent = cat.Frame,
     })
-    AccentEngine:RegisterAccent(cat.ModuleContainer, "ScrollBarImageColor3")
+    AccentEngine:Register(cat.ModuleContainer, "ScrollBarImageColor3")
 
-    local moduleLayout = Utility.Create("UIListLayout", {
+    local modLayout = Utility.Create("UIListLayout", {
         SortOrder = Enum.SortOrder.LayoutOrder,
         Padding = UDim.new(0, 1),
         Parent = cat.ModuleContainer,
@@ -940,94 +1220,214 @@ function Library:CreateCategory(info)
         Parent = cat.ModuleContainer,
     })
 
-    -- Dynamic resize function
-    local maxVisibleHeight = 350 * SCALE_FACTOR
+    local maxH = math.clamp(SCREEN_SIZE.Y - TOP_OFFSET - 80, 150, 380 * SCALE)
+
     cat._UpdateSize = function()
         if cat.Collapsed then
-            Utility.QuickTween(cat.ModuleContainer, 0.25, { Size = UDim2.new(1, 0, 0, 0) })
-            Utility.QuickTween(cat.Frame, 0.25, { Size = UDim2.new(0, catWidth, 0, catHeaderHeight) })
+            Utility.Tween(cat.ModuleContainer, 0.25, { Size = UDim2.new(1, 0, 0, 0) })
+            Utility.Tween(cat.Frame, 0.25, { Size = UDim2.new(0, catWidth, 0, headerH) })
         else
-            local contentHeight = moduleLayout.AbsoluteContentSize.Y + 8
-            local displayHeight = math.min(contentHeight, maxVisibleHeight)
-            Utility.QuickTween(cat.ModuleContainer, 0.25, {
-                Size = UDim2.new(1, 0, 0, displayHeight)
-            })
-            Utility.QuickTween(cat.Frame, 0.25, {
-                Size = UDim2.new(0, catWidth, 0, catHeaderHeight + displayHeight)
-            })
-            cat.ModuleContainer.CanvasSize = UDim2.new(0, 0, 0, contentHeight)
+            local contentH = modLayout.AbsoluteContentSize.Y + 8
+            local displayH = math.min(contentH, maxH)
+            Utility.Tween(cat.ModuleContainer, 0.25, { Size = UDim2.new(1, 0, 0, displayH) })
+            Utility.Tween(cat.Frame, 0.25, { Size = UDim2.new(0, catWidth, 0, headerH + displayH) })
         end
     end
 
-    moduleLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
+    modLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
         cat._UpdateSize()
     end)
-    task.defer(function() cat._UpdateSize() end)
+    task.defer(cat._UpdateSize)
 
-    -- Collapse toggle
-    collapseArrow.MouseButton1Click:Connect(function()
+    -- Collapse
+    collapseBtn.MouseButton1Click:Connect(function()
         cat.Collapsed = not cat.Collapsed
         Utility.ClickSound()
-        if cat.Collapsed then
-            Utility.QuickTween(collapseArrow, 0.2, { Rotation = -90 })
-        else
-            Utility.QuickTween(collapseArrow, 0.2, { Rotation = 0 })
-        end
+        Utility.Spring(collapseBtn, 0.3, { Rotation = cat.Collapsed and -90 or 0 })
         cat._UpdateSize()
     end)
 
-    -- Collapse on touch tap for mobile (tap header area excluding collapse button)
-    header.InputBegan:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.Touch then
-            -- Distinguish from drag; quick tap on header
+    -- Draggable
+    DragSystem:MakeDraggable(cat.Frame, header)
+
+    -- ====================
+    -- Add menu bar button for this category
+    -- ====================
+    local menuBtnW = math.clamp(#name * 8 * SCALE + 16, 55, 140)
+    cat.MenuButton = Utility.Create("TextButton", {
+        Name = "MenuBtn_" .. name,
+        Size = UDim2.new(0, menuBtnW, 0, 24 * SCALE),
+        BackgroundColor3 = startVisible and Library.CurrentAccent or Theme.MenuButton,
+        BackgroundTransparency = startVisible and 0.15 or 0.1,
+        Font = Enum.Font.GothamMedium,
+        TextSize = 11 * SCALE,
+        TextColor3 = startVisible and Theme.TextPrimary or Theme.TextSecondary,
+        Text = name,
+        BorderSizePixel = 0,
+        AutoButtonColor = false,
+        ZIndex = 83,
+        LayoutOrder = #Library.Categories + 1,
+        Parent = Library._MenuBtnParent,
+    })
+    Utility.Create("UICorner", { CornerRadius = UDim.new(0, 5), Parent = cat.MenuButton })
+
+    if startVisible then
+        AccentEngine:Register(cat.MenuButton, "BackgroundColor3")
+    end
+
+    -- Menu button click = toggle window
+    cat.MenuButton.MouseButton1Click:Connect(function()
+        local isVis = cat.Frame.Visible
+        Utility.ClickSound()
+
+        if isVis then
+            -- Close window with animation
+            Utility.PlaySound(Sounds.Close, 0.2, 0.95)
+            cat._shouldBeVisible = false
+            Library.WindowStates[name] = false
+
+            -- Scale down + fade
+            Utility.Tween(cat.Frame, 0.25, {
+                BackgroundTransparency = 1,
+                Size = UDim2.new(0, catWidth, 0, headerH * 0.5),
+            }, Enum.EasingStyle.Quart, Enum.EasingDirection.In, function()
+                cat.Frame.Visible = false
+                cat.Frame.Size = UDim2.new(0, catWidth, 0, headerH)
+                Library:RepositionWindows()
+            end)
+
+            -- Dim children
+            for _, desc in pairs(cat.Frame:GetDescendants()) do
+                pcall(function()
+                    if desc:IsA("GuiObject") and desc.Name ~= "Shadow" then
+                        Utility.Tween(desc, 0.2, { BackgroundTransparency = 1 })
+                        if desc:IsA("TextLabel") or desc:IsA("TextButton") or desc:IsA("TextBox") then
+                            Utility.Tween(desc, 0.2, { TextTransparency = 1 })
+                        end
+                    end
+                end)
+            end
+
+            -- Button deselect
+            Utility.Tween(cat.MenuButton, 0.2, {
+                BackgroundColor3 = Theme.MenuButton,
+                TextColor3 = Theme.TextSecondary,
+            })
+        else
+            -- Open window with animation
+            Utility.PlaySound(Sounds.Open, 0.25, 1.1)
+            cat._shouldBeVisible = true
+            Library.WindowStates[name] = true
+
+            -- Calculate position
+            local visI = 1
+            for _, c in ipairs(Library.Categories) do
+                if c.Frame.Visible then visI = visI + 1 end
+            end
+            cat.Frame.Position = Library:CalculateWindowPosition(visI)
+            cat.Frame.BackgroundTransparency = 1
+            cat.Frame.Visible = true
+
+            -- Restore children
+            for _, desc in pairs(cat.Frame:GetDescendants()) do
+                pcall(function()
+                    if desc:IsA("GuiObject") and desc.Name ~= "Shadow" and desc.Name ~= "Ripple" then
+                        local orig = desc:GetAttribute("_origBT")
+                        if orig then
+                            Utility.Tween(desc, 0.35, { BackgroundTransparency = orig })
+                        else
+                            if desc.BackgroundTransparency == 1 then
+                                -- leave transparent
+                            else
+                                Utility.Tween(desc, 0.35, { BackgroundTransparency = 0 })
+                            end
+                        end
+                        if desc:IsA("TextLabel") or desc:IsA("TextButton") or desc:IsA("TextBox") then
+                            local origTT = desc:GetAttribute("_origTT")
+                            Utility.Tween(desc, 0.35, { TextTransparency = origTT or 0 })
+                        end
+                    end
+                end)
+            end
+
+            -- Frame appear animation
+            Utility.Spring(cat.Frame, 0.4, {
+                BackgroundTransparency = Library.BackgroundTransparency,
+            })
+            cat._UpdateSize()
+
+            -- Button select
+            Utility.Tween(cat.MenuButton, 0.2, {
+                BackgroundColor3 = Library.CurrentAccent,
+                TextColor3 = Theme.TextPrimary,
+            })
+            AccentEngine:Register(cat.MenuButton, "BackgroundColor3")
+        end
+
+        ConfigManager:AutoCheck()
+    end)
+
+    -- Hover
+    cat.MenuButton.MouseEnter:Connect(function()
+        if not cat.Frame.Visible then
+            Utility.Tween(cat.MenuButton, 0.12, { BackgroundColor3 = Theme.MenuButtonHover })
+        end
+    end)
+    cat.MenuButton.MouseLeave:Connect(function()
+        if not cat.Frame.Visible then
+            Utility.Tween(cat.MenuButton, 0.12, { BackgroundColor3 = Theme.MenuButton })
         end
     end)
 
-    -- Make category draggable
-    DragSystem:MakeDraggable(cat.Frame, header)
+    -- Entrance animation if visible
+    if startVisible then
+        cat.Frame.BackgroundTransparency = 1
+        task.defer(function()
+            Utility.Spring(cat.Frame, 0.5, { BackgroundTransparency = Library.BackgroundTransparency })
+        end)
+    end
 
     table.insert(Library.Categories, cat)
     return cat
 end
 
 -- ============================================================
--- MODULE CREATION
+-- MODULE
 -- ============================================================
 local Module = {}
 Module.__index = Module
 
 function Category:CreateModule(info)
     info = info or {}
-    local moduleName = info.Name or "Module"
-    local flagName = info.Flag or moduleName
-    local defaultState = info.Default or false
+    local name = info.Name or "Module"
+    local flag = info.Flag or name
+    local default = info.Default or false
     local callback = info.Callback or function() end
-    local keybind = info.Keybind or nil
-    local tooltip = info.Tooltip or ""
+    local keybind = info.Keybind
+    local cat = self
 
     local mod = setmetatable({}, Module)
-    mod.Name = moduleName
-    mod.Flag = flagName
-    mod.Enabled = defaultState
+    mod.Name = name
+    mod.Flag = flag
+    mod.Enabled = default
     mod.Callback = callback
-    mod.Keybind = keybind
     mod.Elements = {}
     mod.Category = self
     mod.Expanded = false
+    mod.Keybind = keybind
 
-    if Library.Flags[flagName] ~= nil then
-        mod.Enabled = Library.Flags[flagName]
+    if Library.Flags[flag] ~= nil and type(Library.Flags[flag]) == "boolean" then
+        mod.Enabled = Library.Flags[flag]
     end
-    Library.Flags[flagName] = mod.Enabled
+    Library.Flags[flag] = mod.Enabled
 
-    local moduleHeight = math.max(30 * SCALE_FACTOR, MIN_TOUCH)
+    local modH = math.max(28 * SCALE, MIN_TOUCH)
 
-    -- Module Frame
     mod.Frame = Utility.Create("Frame", {
-        Name = "Module_" .. moduleName,
-        Size = UDim2.new(1, 0, 0, moduleHeight),
+        Name = "Mod_" .. name,
+        Size = UDim2.new(1, 0, 0, modH),
         BackgroundColor3 = Theme.ModuleBackground,
-        BackgroundTransparency = 0.15,
+        BackgroundTransparency = 0.1,
         BorderSizePixel = 0,
         ClipsDescendants = true,
         ZIndex = 12,
@@ -1035,70 +1435,83 @@ function Category:CreateModule(info)
     })
     Utility.Create("UICorner", { CornerRadius = UDim.new(0, 5), Parent = mod.Frame })
 
-    -- Accent indicator (left bar)
-    mod.AccentIndicator = Utility.Create("Frame", {
-        Name = "AccentIndicator",
-        Size = UDim2.new(0, 3, 1, -4),
-        Position = UDim2.new(0, 2, 0, 2),
+    -- Accent indicator
+    mod.AccentBar = Utility.Create("Frame", {
+        Size = UDim2.new(0, 2.5, 1, -6),
+        Position = UDim2.new(0, 2, 0, 3),
         BackgroundColor3 = Library.CurrentAccent,
         BackgroundTransparency = mod.Enabled and 0 or 1,
         BorderSizePixel = 0,
         ZIndex = 14,
         Parent = mod.Frame,
     })
-    Utility.Create("UICorner", { CornerRadius = UDim.new(0, 2), Parent = mod.AccentIndicator })
-    AccentEngine:RegisterAccent(mod.AccentIndicator, "BackgroundColor3")
+    Utility.Create("UICorner", { CornerRadius = UDim.new(0, 2), Parent = mod.AccentBar })
+    AccentEngine:Register(mod.AccentBar, "BackgroundColor3")
 
-    -- Module name label
+    -- Name
     mod.NameLabel = Utility.Create("TextLabel", {
-        Name = "NameLabel",
-        Size = UDim2.new(1, -55 * SCALE_FACTOR, 0, moduleHeight),
-        Position = UDim2.new(0, 12 * SCALE_FACTOR, 0, 0),
+        Size = UDim2.new(1, -50 * SCALE, 0, modH),
+        Position = UDim2.new(0, 11 * SCALE, 0, 0),
         BackgroundTransparency = 1,
         Font = Enum.Font.GothamMedium,
-        TextSize = 12.5 * SCALE_FACTOR,
+        TextSize = 11.5 * SCALE,
         TextColor3 = mod.Enabled and Theme.TextPrimary or Theme.TextSecondary,
-        Text = moduleName,
+        Text = name,
         TextXAlignment = Enum.TextXAlignment.Left,
         TextTruncate = Enum.TextTruncate.AtEnd,
         ZIndex = 13,
         Parent = mod.Frame,
     })
 
-    -- Toggle switch (visual)
-    local toggleFrame = Utility.Create("Frame", {
-        Name = "ToggleSwitch",
+    -- Toggle switch
+    local switchW = 30 * SCALE
+    local switchH = 15 * SCALE
+    local switchFrame = Utility.Create("Frame", {
         AnchorPoint = Vector2.new(1, 0.5),
-        Position = UDim2.new(1, -8 * SCALE_FACTOR, 0, moduleHeight / 2),
-        Size = UDim2.new(0, 34 * SCALE_FACTOR, 0, 17 * SCALE_FACTOR),
+        Position = UDim2.new(1, -6 * SCALE, 0, modH / 2),
+        Size = UDim2.new(0, switchW, 0, switchH),
         BackgroundColor3 = mod.Enabled and Library.CurrentAccent or Theme.ToggleOff,
-        BackgroundTransparency = 0.1,
+        BackgroundTransparency = 0.05,
         BorderSizePixel = 0,
         ZIndex = 14,
         Parent = mod.Frame,
     })
-    Utility.Create("UICorner", { CornerRadius = UDim.new(1, 0), Parent = toggleFrame })
-    if mod.Enabled then
-        AccentEngine:RegisterAccent(toggleFrame, "BackgroundColor3")
-    end
-    mod._ToggleSwitchFrame = toggleFrame
+    Utility.Create("UICorner", { CornerRadius = UDim.new(1, 0), Parent = switchFrame })
+    if mod.Enabled then AccentEngine:Register(switchFrame, "BackgroundColor3") end
+    mod._SwitchFrame = switchFrame
 
-    local toggleCircle = Utility.Create("Frame", {
-        Name = "Circle",
+    local circleSize = switchH - 4
+    local circle = Utility.Create("Frame", {
         AnchorPoint = Vector2.new(0, 0.5),
-        Position = mod.Enabled and UDim2.new(1, -15 * SCALE_FACTOR, 0.5, 0) or UDim2.new(0, 2 * SCALE_FACTOR, 0.5, 0),
-        Size = UDim2.new(0, 13 * SCALE_FACTOR, 0, 13 * SCALE_FACTOR),
-        BackgroundColor3 = Color3.fromRGB(255, 255, 255),
+        Position = mod.Enabled and UDim2.new(1, -circleSize - 2, 0.5, 0) or UDim2.new(0, 2, 0.5, 0),
+        Size = UDim2.new(0, circleSize, 0, circleSize),
+        BackgroundColor3 = Color3.new(1, 1, 1),
         BorderSizePixel = 0,
         ZIndex = 15,
-        Parent = toggleFrame,
+        Parent = switchFrame,
     })
-    Utility.Create("UICorner", { CornerRadius = UDim.new(1, 0), Parent = toggleCircle })
+    Utility.Create("UICorner", { CornerRadius = UDim.new(1, 0), Parent = circle })
+    mod._Circle = circle
 
-    -- Elements container (expandable, shown when module is clicked to expand)
+    -- Expand indicator (arrow appears when elements exist)
+    mod._ExpandArrow = Utility.Create("TextLabel", {
+        AnchorPoint = Vector2.new(1, 0.5),
+        Position = UDim2.new(1, -(switchW + 12) * SCALE, 0, modH / 2),
+        Size = UDim2.new(0, 12, 0, 12),
+        BackgroundTransparency = 1,
+        Font = Enum.Font.GothamBold,
+        TextSize = 8 * SCALE,
+        TextColor3 = Theme.TextDim,
+        Text = "",
+        ZIndex = 13,
+        Visible = false,
+        Parent = mod.Frame,
+    })
+
+    -- Elements container
     mod.ElementsContainer = Utility.Create("Frame", {
-        Name = "ElementsContainer",
-        Position = UDim2.new(0, 0, 0, moduleHeight),
+        Name = "Elements",
+        Position = UDim2.new(0, 0, 0, modH),
         Size = UDim2.new(1, 0, 0, 0),
         BackgroundTransparency = 1,
         ClipsDescendants = true,
@@ -1112,8 +1525,8 @@ function Category:CreateModule(info)
         Parent = mod.ElementsContainer,
     })
     Utility.Create("UIPadding", {
-        PaddingLeft = UDim.new(0, 5),
-        PaddingRight = UDim.new(0, 5),
+        PaddingLeft = UDim.new(0, 4),
+        PaddingRight = UDim.new(0, 4),
         PaddingTop = UDim.new(0, 3),
         PaddingBottom = UDim.new(0, 5),
         Parent = mod.ElementsContainer,
@@ -1121,59 +1534,67 @@ function Category:CreateModule(info)
 
     mod._elemLayout = elemLayout
 
-    -- Update elements container size
     mod._UpdateElementSize = function()
         local contentH = elemLayout.AbsoluteContentSize.Y + 10
         if mod.Expanded and #mod.Elements > 0 then
-            Utility.QuickTween(mod.ElementsContainer, 0.25, { Size = UDim2.new(1, 0, 0, contentH) })
-            Utility.QuickTween(mod.Frame, 0.25, { Size = UDim2.new(1, 0, 0, moduleHeight + contentH) })
+            Utility.Tween(mod.ElementsContainer, 0.28, { Size = UDim2.new(1, 0, 0, contentH) })
+            Utility.Tween(mod.Frame, 0.28, { Size = UDim2.new(1, 0, 0, modH + contentH) })
         else
-            Utility.QuickTween(mod.ElementsContainer, 0.2, { Size = UDim2.new(1, 0, 0, 0) })
-            Utility.QuickTween(mod.Frame, 0.2, { Size = UDim2.new(1, 0, 0, moduleHeight) })
+            Utility.Tween(mod.ElementsContainer, 0.22, { Size = UDim2.new(1, 0, 0, 0) })
+            Utility.Tween(mod.Frame, 0.22, { Size = UDim2.new(1, 0, 0, modH) })
         end
         task.defer(function()
-            if self._UpdateSize then self._UpdateSize() end
+            if cat._UpdateSize then cat._UpdateSize() end
         end)
     end
 
     elemLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
-        mod._UpdateElementSize()
+        if mod.Expanded then mod._UpdateElementSize() end
     end)
 
-    -- Module toggle function
+    -- Show expand arrow when elements are added
+    mod._CheckArrow = function()
+        if #mod.Elements > 0 then
+            mod._ExpandArrow.Text = "▶"
+            mod._ExpandArrow.Visible = true
+        end
+    end
+
+    -- Toggle state
     mod._SetState = function(state)
         mod.Enabled = state
         Library.Flags[mod.Flag] = state
 
-        -- Visual update
-        Utility.QuickTween(mod.NameLabel, 0.2, {
+        -- Visual
+        Utility.Tween(mod.NameLabel, 0.2, {
             TextColor3 = state and Theme.TextPrimary or Theme.TextSecondary
         })
-        Utility.QuickTween(mod.AccentIndicator, 0.2, {
+        Utility.Tween(mod.AccentBar, 0.25, {
             BackgroundTransparency = state and 0 or 1
         })
-        Utility.QuickTween(toggleCircle, 0.25, {
-            Position = state and UDim2.new(1, -15 * SCALE_FACTOR, 0.5, 0) or UDim2.new(0, 2 * SCALE_FACTOR, 0.5, 0)
+        Utility.Spring(mod._Circle, 0.3, {
+            Position = state and UDim2.new(1, -circleSize - 2, 0.5, 0) or UDim2.new(0, 2, 0.5, 0)
         })
         if state then
-            Utility.QuickTween(toggleFrame, 0.2, { BackgroundColor3 = Library.CurrentAccent })
+            Utility.Tween(switchFrame, 0.2, { BackgroundColor3 = Library.CurrentAccent })
+            AccentEngine:Register(switchFrame, "BackgroundColor3")
+            Utility.ToggleOnSound()
+            -- Pulse animation on frame
+            Utility.Tween(mod.Frame, 0.1, { BackgroundColor3 = Theme.ModuleEnabled })
         else
-            Utility.QuickTween(toggleFrame, 0.2, { BackgroundColor3 = Theme.ToggleOff })
+            Utility.Tween(switchFrame, 0.2, { BackgroundColor3 = Theme.ToggleOff })
+            Utility.ToggleOffSound()
+            Utility.Tween(mod.Frame, 0.15, { BackgroundColor3 = Theme.ModuleBackground })
         end
 
-        -- ArrayList update
-        Library:_UpdateArrayList(moduleName, state)
-
-        Utility.ToggleSound(state)
+        Library:_UpdateArrayList(name, state)
         pcall(callback, state)
-        ConfigManager:AutoSaveCheck()
+        ConfigManager:AutoCheck()
     end
 
-    -- Click to toggle (the toggle switch area)
+    -- Click to toggle
     local toggleBtn = Utility.Create("TextButton", {
-        Name = "ToggleButton",
-        Size = UDim2.new(1, 0, 0, moduleHeight),
-        Position = UDim2.new(0, 0, 0, 0),
+        Size = UDim2.new(1, 0, 0, modH),
         BackgroundTransparency = 1,
         Text = "",
         ZIndex = 16,
@@ -1182,102 +1603,102 @@ function Category:CreateModule(info)
 
     toggleBtn.MouseButton1Click:Connect(function()
         mod._SetState(not mod.Enabled)
+        -- Ripple
+        local mp = UserInputService:GetMouseLocation()
+        Utility.Ripple(mod.Frame, mp.X, mp.Y - (GuiService:GetGuiInset().Y))
     end)
 
-    -- Hover effect
+    -- Hover
     toggleBtn.MouseEnter:Connect(function()
-        Utility.QuickTween(mod.Frame, 0.15, { BackgroundColor3 = Theme.ModuleHover })
+        Utility.Tween(mod.Frame, 0.12, { BackgroundColor3 = Theme.ModuleHover })
     end)
     toggleBtn.MouseLeave:Connect(function()
-        Utility.QuickTween(mod.Frame, 0.15, { BackgroundColor3 = Theme.ModuleBackground })
+        Utility.Tween(mod.Frame, 0.12, {
+            BackgroundColor3 = mod.Enabled and Theme.ModuleEnabled or Theme.ModuleBackground
+        })
     end)
 
-    -- Right-click (PC) or long press (mobile) to expand elements
+    -- Right click (PC) or long press (mobile) to expand
     toggleBtn.MouseButton2Click:Connect(function()
         if #mod.Elements > 0 then
             mod.Expanded = not mod.Expanded
+            Utility.ExpandSound()
+            Utility.Spring(mod._ExpandArrow, 0.3, { Rotation = mod.Expanded and 90 or 0 })
             mod._UpdateElementSize()
-            Utility.ClickSound()
         end
     end)
 
-    -- Mobile long press to expand
-    local longPressTime = 0
+    -- Mobile long press
+    local pressStart = 0
     toggleBtn.InputBegan:Connect(function(input)
         if input.UserInputType == Enum.UserInputType.Touch then
-            longPressTime = os.clock()
+            pressStart = os.clock()
         end
     end)
     toggleBtn.InputEnded:Connect(function(input)
         if input.UserInputType == Enum.UserInputType.Touch then
-            local duration = os.clock() - longPressTime
-            if duration >= 0.5 and #mod.Elements > 0 then
-                -- Long press: toggle expand
+            if os.clock() - pressStart >= 0.45 and #mod.Elements > 0 then
                 mod.Expanded = not mod.Expanded
+                Utility.ExpandSound()
+                Utility.Spring(mod._ExpandArrow, 0.3, { Rotation = mod.Expanded and 90 or 0 })
                 mod._UpdateElementSize()
-                Utility.ClickSound()
             end
         end
     end)
 
-    -- Keybind support
+    -- Keybind
     if keybind then
-        local kbConn = UserInputService.InputBegan:Connect(function(input, processed)
-            if processed then return end
+        local kc = UserInputService.InputBegan:Connect(function(input, gpe)
+            if gpe then return end
             if not Library.Visible and not Library.KeybindActiveWhenHidden then return end
             if input.KeyCode == keybind then
                 mod._SetState(not mod.Enabled)
             end
         end)
-        table.insert(Library.Connections, kbConn)
+        table.insert(Library.Connections, kc)
     end
 
-    -- Apply initial state visuals without animation
     if mod.Enabled then
-        Library:_UpdateArrayList(moduleName, true)
+        Library:_UpdateArrayList(name, true)
         pcall(callback, true)
     end
 
     table.insert(self.Modules, mod)
-    task.defer(function()
-        self._UpdateSize()
-    end)
+    task.defer(function() self._UpdateSize() end)
     return mod
 end
 
 -- ============================================================
--- ARRAYLIST MANAGEMENT
+-- ARRAYLIST
 -- ============================================================
-function Library:_UpdateArrayList(moduleName, enabled)
+function Library:_UpdateArrayList(name, enabled)
     if not Library.ArrayList then return end
     if enabled then
-        if not Library.ArrayList:FindFirstChild("AL_" .. moduleName) then
-            local label = Utility.Create("TextLabel", {
-                Name = "AL_" .. moduleName,
-                Size = UDim2.new(0, 0, 0, 16 * SCALE_FACTOR),
+        if not Library.ArrayList:FindFirstChild("AL_" .. name) then
+            local lbl = Utility.Create("TextLabel", {
+                Name = "AL_" .. name,
+                Size = UDim2.new(0, 0, 0, 15 * SCALE),
                 AutomaticSize = Enum.AutomaticSize.X,
-                BackgroundColor3 = Theme.Watermark,
-                BackgroundTransparency = 0.3,
+                BackgroundColor3 = Theme.Notification,
+                BackgroundTransparency = 0.25,
                 Font = Enum.Font.GothamMedium,
-                TextSize = 11 * SCALE_FACTOR,
+                TextSize = 10.5 * SCALE,
                 TextColor3 = Library.CurrentAccent,
-                Text = "  " .. moduleName .. "  ",
+                Text = "  " .. name .. "  ",
                 TextXAlignment = Enum.TextXAlignment.Right,
-                ZIndex = 101,
+                TextTransparency = 1,
+                ZIndex = 91,
                 Parent = Library.ArrayList,
             })
-            Utility.Create("UICorner", { CornerRadius = UDim.new(0, 3), Parent = label })
-            AccentEngine:RegisterAccent(label, "TextColor3")
-            -- Animate in
-            label.TextTransparency = 1
-            Utility.QuickTween(label, 0.3, { TextTransparency = 0 })
+            Utility.Create("UICorner", { CornerRadius = UDim.new(0, 3), Parent = lbl })
+            AccentEngine:Register(lbl, "TextColor3")
+            Utility.Spring(lbl, 0.35, { TextTransparency = 0 })
         end
     else
-        local existing = Library.ArrayList:FindFirstChild("AL_" .. moduleName)
-        if existing then
-            Utility.QuickTween(existing, 0.2, { TextTransparency = 1 })
-            task.delay(0.25, function()
-                pcall(function() existing:Destroy() end)
+        local ex = Library.ArrayList:FindFirstChild("AL_" .. name)
+        if ex then
+            Utility.Tween(ex, 0.2, { TextTransparency = 1 }, nil, nil, function()
+                pcall(function() ex:Destroy() end)
             end)
         end
     end
@@ -1288,297 +1709,278 @@ end
 -- ============================================================
 function Module:CreateSlider(info)
     info = info or {}
-    local sliderName = info.Name or "Slider"
-    local flagName = info.Flag or (self.Flag .. "_" .. sliderName)
-    local minVal = info.Min or 0
-    local maxVal = info.Max or 100
-    local defaultVal = info.Default or minVal
-    local increment = info.Increment or 1
+    local sName = info.Name or "Slider"
+    local flag = info.Flag or (self.Flag .. "_" .. sName)
+    local minV = info.Min or 0
+    local maxV = info.Max or 100
+    local defV = info.Default or minV
+    local inc = info.Increment or 1
     local suffix = info.Suffix or ""
-    local callback = info.Callback or function() end
+    local cb = info.Callback or function() end
 
-    if Library.Flags[flagName] ~= nil and type(Library.Flags[flagName]) == "number" then
-        defaultVal = Library.Flags[flagName]
+    if Library.Flags[flag] ~= nil and type(Library.Flags[flag]) == "number" then
+        defV = Library.Flags[flag]
     end
-    Library.Flags[flagName] = defaultVal
+    Library.Flags[flag] = defV
 
-    local sliderHeight = math.max(38 * SCALE_FACTOR, MIN_TOUCH)
+    local sH = math.max(36 * SCALE, MIN_TOUCH)
 
-    local sliderFrame = Utility.Create("Frame", {
-        Name = "Slider_" .. sliderName,
-        Size = UDim2.new(1, 0, 0, sliderHeight),
+    local sFrame = Utility.Create("Frame", {
+        Name = "Slider_" .. sName,
+        Size = UDim2.new(1, 0, 0, sH),
         BackgroundColor3 = Theme.ElementBackground,
-        BackgroundTransparency = 0.3,
+        BackgroundTransparency = 0.25,
         BorderSizePixel = 0,
         ZIndex = 13,
         Parent = self.ElementsContainer,
     })
-    Utility.Create("UICorner", { CornerRadius = UDim.new(0, 4), Parent = sliderFrame })
+    Utility.Create("UICorner", { CornerRadius = UDim.new(0, 4), Parent = sFrame })
 
-    local sliderLabel = Utility.Create("TextLabel", {
-        Name = "Label",
-        Size = UDim2.new(0.55, 0, 0, 16 * SCALE_FACTOR),
+    Utility.Create("TextLabel", {
+        Size = UDim2.new(0.5, 0, 0, 14 * SCALE),
         Position = UDim2.new(0, 6, 0, 2),
         BackgroundTransparency = 1,
         Font = Enum.Font.Gotham,
-        TextSize = 11 * SCALE_FACTOR,
+        TextSize = 10 * SCALE,
         TextColor3 = Theme.TextSecondary,
-        Text = sliderName,
+        Text = sName,
         TextXAlignment = Enum.TextXAlignment.Left,
-        TextTruncate = Enum.TextTruncate.AtEnd,
         ZIndex = 14,
-        Parent = sliderFrame,
+        Parent = sFrame,
     })
 
-    local valueLabel = Utility.Create("TextLabel", {
-        Name = "Value",
+    local valLabel = Utility.Create("TextLabel", {
         AnchorPoint = Vector2.new(1, 0),
-        Size = UDim2.new(0.4, 0, 0, 16 * SCALE_FACTOR),
+        Size = UDim2.new(0.45, 0, 0, 14 * SCALE),
         Position = UDim2.new(1, -6, 0, 2),
         BackgroundTransparency = 1,
         Font = Enum.Font.GothamMedium,
-        TextSize = 11 * SCALE_FACTOR,
+        TextSize = 10 * SCALE,
         TextColor3 = Theme.TextPrimary,
-        Text = tostring(defaultVal) .. suffix,
+        Text = tostring(defV) .. suffix,
         TextXAlignment = Enum.TextXAlignment.Right,
         ZIndex = 14,
-        Parent = sliderFrame,
+        Parent = sFrame,
     })
 
-    -- Slider track
-    local trackFrame = Utility.Create("Frame", {
-        Name = "Track",
+    local track = Utility.Create("Frame", {
         AnchorPoint = Vector2.new(0.5, 0),
-        Position = UDim2.new(0.5, 0, 0, 20 * SCALE_FACTOR),
-        Size = UDim2.new(1, -16, 0, 8 * SCALE_FACTOR),
+        Position = UDim2.new(0.5, 0, 0, 18 * SCALE),
+        Size = UDim2.new(1, -14, 0, 7 * SCALE),
         BackgroundColor3 = Theme.SliderBackground,
         BorderSizePixel = 0,
         ZIndex = 14,
-        Parent = sliderFrame,
+        Parent = sFrame,
     })
-    Utility.Create("UICorner", { CornerRadius = UDim.new(1, 0), Parent = trackFrame })
+    Utility.Create("UICorner", { CornerRadius = UDim.new(1, 0), Parent = track })
 
-    -- Fill
-    local initialPercent = (defaultVal - minVal) / (maxVal - minVal)
-    local fillFrame = Utility.Create("Frame", {
-        Name = "Fill",
-        Size = UDim2.new(math.clamp(initialPercent, 0, 1), 0, 1, 0),
+    local pct = math.clamp((defV - minV) / (maxV - minV), 0, 1)
+    local fill = Utility.Create("Frame", {
+        Size = UDim2.new(pct, 0, 1, 0),
         BackgroundColor3 = Library.CurrentAccent,
         BorderSizePixel = 0,
         ZIndex = 15,
-        Parent = trackFrame,
+        Parent = track,
     })
-    Utility.Create("UICorner", { CornerRadius = UDim.new(1, 0), Parent = fillFrame })
-    local fillGrad = Utility.Create("UIGradient", {
-        Color = ColorSequence.new(Library.CurrentAccent, Library.CurrentAccent),
-        Parent = fillFrame,
-    })
-    AccentEngine:RegisterAccent(fillFrame, "BackgroundColor3")
-    AccentEngine:RegisterGradient(fillGrad)
+    Utility.Create("UICorner", { CornerRadius = UDim.new(1, 0), Parent = fill })
+    local fGrad = Utility.Create("UIGradient", { Parent = fill })
+    AccentEngine:Register(fill, "BackgroundColor3")
+    AccentEngine:RegisterGradient(fGrad)
 
-    -- Knob
     local knob = Utility.Create("Frame", {
-        Name = "Knob",
         AnchorPoint = Vector2.new(0.5, 0.5),
-        Position = UDim2.new(math.clamp(initialPercent, 0, 1), 0, 0.5, 0),
-        Size = UDim2.new(0, 14 * SCALE_FACTOR, 0, 14 * SCALE_FACTOR),
-        BackgroundColor3 = Color3.fromRGB(255, 255, 255),
+        Position = UDim2.new(pct, 0, 0.5, 0),
+        Size = UDim2.new(0, 12 * SCALE, 0, 12 * SCALE),
+        BackgroundColor3 = Color3.new(1, 1, 1),
         BorderSizePixel = 0,
         ZIndex = 16,
-        Parent = trackFrame,
+        Parent = track,
     })
     Utility.Create("UICorner", { CornerRadius = UDim.new(1, 0), Parent = knob })
-    Utility.Create("UIStroke", {
-        Color = Library.CurrentAccent,
-        Thickness = 1.5,
-        Parent = knob,
-    })
 
-    -- Slider logic
     local sliding = false
-    local currentValue = defaultVal
+    local curVal = defV
+    local lastSoundTick = 0
 
-    local function updateSlider(inputPos)
-        local trackAbsPos = trackFrame.AbsolutePosition.X
-        local trackAbsSize = trackFrame.AbsoluteSize.X
-        local relativeX = math.clamp((inputPos - trackAbsPos) / trackAbsSize, 0, 1)
-        local rawVal = minVal + (maxVal - minVal) * relativeX
-        local snapped = math.floor(rawVal / increment + 0.5) * increment
-        snapped = math.clamp(snapped, minVal, maxVal)
-        snapped = Utility.RoundNumber(snapped, 4)
-        currentValue = snapped
-        Library.Flags[flagName] = snapped
-
-        local percent = (snapped - minVal) / (maxVal - minVal)
-        Utility.QuickTween(fillFrame, 0.08, { Size = UDim2.new(percent, 0, 1, 0) }, Enum.EasingStyle.Linear)
-        Utility.QuickTween(knob, 0.08, { Position = UDim2.new(percent, 0, 0.5, 0) }, Enum.EasingStyle.Linear)
-        valueLabel.Text = tostring(snapped) .. suffix
-
-        pcall(callback, snapped)
-        ConfigManager:AutoSaveCheck()
+    local function update(posX)
+        local aPos = track.AbsolutePosition.X
+        local aSize = track.AbsoluteSize.X
+        local rel = math.clamp((posX - aPos) / aSize, 0, 1)
+        local raw = minV + (maxV - minV) * rel
+        local snap = math.floor(raw / inc + 0.5) * inc
+        snap = math.clamp(Utility.RoundNum(snap, 4), minV, maxV)
+        curVal = snap
+        Library.Flags[flag] = snap
+        local p = (snap - minV) / (maxV - minV)
+        Utility.Tween(fill, 0.06, { Size = UDim2.new(p, 0, 1, 0) }, Enum.EasingStyle.Linear)
+        Utility.Tween(knob, 0.06, { Position = UDim2.new(p, 0, 0.5, 0) }, Enum.EasingStyle.Linear)
+        valLabel.Text = tostring(snap) .. suffix
+        -- Slider tick sound
+        if os.clock() - lastSoundTick > 0.08 then
+            Utility.SliderSound()
+            lastSoundTick = os.clock()
+        end
+        pcall(cb, snap)
+        ConfigManager:AutoCheck()
     end
 
-    -- Mouse input
-    trackFrame.InputBegan:Connect(function(input)
+    track.InputBegan:Connect(function(input)
         if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
             sliding = true
-            updateSlider(input.Position.X)
+            -- Knob grow
+            Utility.Spring(knob, 0.15, { Size = UDim2.new(0, 15 * SCALE, 0, 15 * SCALE) })
+            update(input.Position.X)
         end
     end)
 
-    local slideConn1 = UserInputService.InputChanged:Connect(function(input)
-        if sliding then
-            if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
-                updateSlider(input.Position.X)
+    local sc1 = UserInputService.InputChanged:Connect(function(input)
+        if sliding and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+            update(input.Position.X)
+        end
+    end)
+    local sc2 = UserInputService.InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            if sliding then
+                sliding = false
+                Utility.Spring(knob, 0.2, { Size = UDim2.new(0, 12 * SCALE, 0, 12 * SCALE) })
             end
         end
     end)
+    table.insert(Library.Connections, sc1)
+    table.insert(Library.Connections, sc2)
 
-    local slideConn2 = UserInputService.InputEnded:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-            sliding = false
-        end
-    end)
-
-    table.insert(Library.Connections, slideConn1)
-    table.insert(Library.Connections, slideConn2)
-
-    local element = {
-        Type = "Slider",
-        Frame = sliderFrame,
-        SetValue = function(_, val)
-            val = math.clamp(val, minVal, maxVal)
-            currentValue = val
-            Library.Flags[flagName] = val
-            local percent = (val - minVal) / (maxVal - minVal)
-            fillFrame.Size = UDim2.new(percent, 0, 1, 0)
-            knob.Position = UDim2.new(percent, 0, 0.5, 0)
-            valueLabel.Text = tostring(val) .. suffix
-            pcall(callback, val)
+    local elem = {
+        Type = "Slider", Frame = sFrame,
+        SetValue = function(_, v)
+            v = math.clamp(v, minV, maxV)
+            curVal = v; Library.Flags[flag] = v
+            local pp = (v - minV) / (maxV - minV)
+            fill.Size = UDim2.new(pp, 0, 1, 0)
+            knob.Position = UDim2.new(pp, 0, 0.5, 0)
+            valLabel.Text = tostring(v) .. suffix
+            pcall(cb, v)
         end,
-        GetValue = function()
-            return currentValue
-        end,
+        GetValue = function() return curVal end,
     }
-    table.insert(self.Elements, element)
-    task.defer(function() self._UpdateElementSize() end)
-    return element
+    table.insert(self.Elements, elem)
+    self._CheckArrow()
+    task.defer(self._UpdateElementSize)
+    return elem
 end
 
 -- ============================================================
--- TOGGLE (Sub-toggle within module)
+-- TOGGLE (Sub)
 -- ============================================================
 function Module:CreateToggle(info)
     info = info or {}
-    local toggleName = info.Name or "Toggle"
-    local flagName = info.Flag or (self.Flag .. "_" .. toggleName)
-    local defaultVal = info.Default or false
-    local callback = info.Callback or function() end
+    local tName = info.Name or "Toggle"
+    local flag = info.Flag or (self.Flag .. "_" .. tName)
+    local def = info.Default or false
+    local cb = info.Callback or function() end
 
-    if Library.Flags[flagName] ~= nil and type(Library.Flags[flagName]) == "boolean" then
-        defaultVal = Library.Flags[flagName]
+    if Library.Flags[flag] ~= nil and type(Library.Flags[flag]) == "boolean" then
+        def = Library.Flags[flag]
     end
-    Library.Flags[flagName] = defaultVal
+    Library.Flags[flag] = def
 
-    local toggleHeight = math.max(28 * SCALE_FACTOR, MIN_TOUCH)
+    local tH = math.max(26 * SCALE, MIN_TOUCH)
 
-    local toggleFrame = Utility.Create("Frame", {
-        Name = "Toggle_" .. toggleName,
-        Size = UDim2.new(1, 0, 0, toggleHeight),
+    local tFrame = Utility.Create("Frame", {
+        Name = "Tog_" .. tName,
+        Size = UDim2.new(1, 0, 0, tH),
         BackgroundColor3 = Theme.ElementBackground,
-        BackgroundTransparency = 0.3,
+        BackgroundTransparency = 0.25,
         BorderSizePixel = 0,
+        ClipsDescendants = true,
         ZIndex = 13,
         Parent = self.ElementsContainer,
     })
-    Utility.Create("UICorner", { CornerRadius = UDim.new(0, 4), Parent = toggleFrame })
+    Utility.Create("UICorner", { CornerRadius = UDim.new(0, 4), Parent = tFrame })
 
-    local label = Utility.Create("TextLabel", {
-        Name = "Label",
-        Size = UDim2.new(1, -40 * SCALE_FACTOR, 1, 0),
-        Position = UDim2.new(0, 8, 0, 0),
+    Utility.Create("TextLabel", {
+        Size = UDim2.new(1, -35 * SCALE, 1, 0),
+        Position = UDim2.new(0, 7, 0, 0),
         BackgroundTransparency = 1,
         Font = Enum.Font.Gotham,
-        TextSize = 11 * SCALE_FACTOR,
+        TextSize = 10.5 * SCALE,
         TextColor3 = Theme.TextSecondary,
-        Text = toggleName,
+        Text = tName,
         TextXAlignment = Enum.TextXAlignment.Left,
         ZIndex = 14,
-        Parent = toggleFrame,
+        Parent = tFrame,
     })
 
-    -- Checkbox
-    local checkBox = Utility.Create("Frame", {
-        Name = "CheckBox",
+    local boxSize = 16 * SCALE
+    local box = Utility.Create("Frame", {
         AnchorPoint = Vector2.new(1, 0.5),
-        Position = UDim2.new(1, -8 * SCALE_FACTOR, 0.5, 0),
-        Size = UDim2.new(0, 18 * SCALE_FACTOR, 0, 18 * SCALE_FACTOR),
-        BackgroundColor3 = defaultVal and Library.CurrentAccent or Theme.ToggleOff,
-        BackgroundTransparency = 0.1,
+        Position = UDim2.new(1, -7, 0.5, 0),
+        Size = UDim2.new(0, boxSize, 0, boxSize),
+        BackgroundColor3 = def and Library.CurrentAccent or Theme.ToggleOff,
+        BackgroundTransparency = 0.05,
         BorderSizePixel = 0,
         ZIndex = 14,
-        Parent = toggleFrame,
+        Parent = tFrame,
     })
-    Utility.Create("UICorner", { CornerRadius = UDim.new(0, 4), Parent = checkBox })
+    Utility.Create("UICorner", { CornerRadius = UDim.new(0, 4), Parent = box })
+    if def then AccentEngine:Register(box, "BackgroundColor3") end
 
-    local checkMark = Utility.Create("TextLabel", {
-        Name = "CheckMark",
+    local check = Utility.Create("TextLabel", {
         Size = UDim2.new(1, 0, 1, 0),
         BackgroundTransparency = 1,
         Font = Enum.Font.GothamBold,
-        TextSize = 13 * SCALE_FACTOR,
-        TextColor3 = Color3.fromRGB(255, 255, 255),
-        Text = defaultVal and "✓" or "",
+        TextSize = 12 * SCALE,
+        TextColor3 = Color3.new(1, 1, 1),
+        Text = def and "✓" or "",
+        TextTransparency = def and 0 or 1,
         ZIndex = 15,
-        Parent = checkBox,
+        Parent = box,
     })
 
-    if defaultVal then
-        AccentEngine:RegisterAccent(checkBox, "BackgroundColor3")
-    end
-
-    local state = defaultVal
+    local state = def
 
     local function toggle()
         state = not state
-        Library.Flags[flagName] = state
+        Library.Flags[flag] = state
         if state then
-            Utility.QuickTween(checkBox, 0.2, { BackgroundColor3 = Library.CurrentAccent })
-            checkMark.Text = "✓"
-            AccentEngine:RegisterAccent(checkBox, "BackgroundColor3")
+            Utility.Tween(box, 0.2, { BackgroundColor3 = Library.CurrentAccent })
+            AccentEngine:Register(box, "BackgroundColor3")
+            check.Text = "✓"
+            Utility.Spring(check, 0.25, { TextTransparency = 0 })
+            -- Box bounce
+            Utility.Spring(box, 0.15, { Size = UDim2.new(0, boxSize + 3, 0, boxSize + 3) })
+            task.delay(0.15, function()
+                Utility.Spring(box, 0.2, { Size = UDim2.new(0, boxSize, 0, boxSize) })
+            end)
+            Utility.ToggleOnSound()
         else
-            Utility.QuickTween(checkBox, 0.2, { BackgroundColor3 = Theme.ToggleOff })
-            checkMark.Text = ""
+            Utility.Tween(box, 0.2, { BackgroundColor3 = Theme.ToggleOff })
+            Utility.Tween(check, 0.15, { TextTransparency = 1 })
+            Utility.ToggleOffSound()
         end
-        Utility.ToggleSound(state)
-        pcall(callback, state)
-        ConfigManager:AutoSaveCheck()
+        pcall(cb, state)
+        ConfigManager:AutoCheck()
     end
 
-    local toggleBtn = Utility.Create("TextButton", {
+    local btn = Utility.Create("TextButton", {
         Size = UDim2.new(1, 0, 1, 0),
-        BackgroundTransparency = 1,
-        Text = "",
-        ZIndex = 16,
-        Parent = toggleFrame,
+        BackgroundTransparency = 1, Text = "",
+        ZIndex = 16, Parent = tFrame,
     })
-    toggleBtn.MouseButton1Click:Connect(toggle)
+    btn.MouseButton1Click:Connect(function()
+        toggle()
+        local mp = UserInputService:GetMouseLocation()
+        Utility.Ripple(tFrame, mp.X, mp.Y - GuiService:GetGuiInset().Y)
+    end)
 
-    local element = {
-        Type = "Toggle",
-        Frame = toggleFrame,
-        SetValue = function(_, val)
-            if state ~= val then
-                toggle()
-            end
-        end,
-        GetValue = function()
-            return state
-        end,
+    local elem = {
+        Type = "Toggle", Frame = tFrame,
+        SetValue = function(_, v) if state ~= v then toggle() end end,
+        GetValue = function() return state end,
     }
-    table.insert(self.Elements, element)
-    task.defer(function() self._UpdateElementSize() end)
-    return element
+    table.insert(self.Elements, elem)
+    self._CheckArrow()
+    task.defer(self._UpdateElementSize)
+    return elem
 end
 
 -- ============================================================
@@ -1586,213 +1988,180 @@ end
 -- ============================================================
 function Module:CreateDropdown(info)
     info = info or {}
-    local dropName = info.Name or "Dropdown"
-    local flagName = info.Flag or (self.Flag .. "_" .. dropName)
+    local dName = info.Name or "Dropdown"
+    local flag = info.Flag or (self.Flag .. "_" .. dName)
     local options = info.Options or {}
-    local defaultOption = info.Default or (options[1] or "")
-    local callback = info.Callback or function() end
+    local def = info.Default or (options[1] or "")
+    local cb = info.Callback or function() end
 
-    if Library.Flags[flagName] ~= nil and type(Library.Flags[flagName]) == "string" then
-        defaultOption = Library.Flags[flagName]
+    if Library.Flags[flag] ~= nil and type(Library.Flags[flag]) == "string" then
+        def = Library.Flags[flag]
     end
-    Library.Flags[flagName] = defaultOption
+    Library.Flags[flag] = def
 
-    local dropClosedHeight = math.max(32 * SCALE_FACTOR, MIN_TOUCH)
-    local dropItemHeight = math.max(26 * SCALE_FACTOR, MIN_TOUCH - 6)
-    local dropOpen = false
+    local dClosedH = math.max(30 * SCALE, MIN_TOUCH)
+    local dItemH = math.max(24 * SCALE, MIN_TOUCH - 8)
+    local dOpen = false
 
-    local dropFrame = Utility.Create("Frame", {
-        Name = "Dropdown_" .. dropName,
-        Size = UDim2.new(1, 0, 0, dropClosedHeight),
+    local dFrame = Utility.Create("Frame", {
+        Name = "Drop_" .. dName,
+        Size = UDim2.new(1, 0, 0, dClosedH),
         BackgroundColor3 = Theme.ElementBackground,
-        BackgroundTransparency = 0.3,
+        BackgroundTransparency = 0.25,
         BorderSizePixel = 0,
         ClipsDescendants = true,
         ZIndex = 13,
         Parent = self.ElementsContainer,
     })
-    Utility.Create("UICorner", { CornerRadius = UDim.new(0, 4), Parent = dropFrame })
+    Utility.Create("UICorner", { CornerRadius = UDim.new(0, 4), Parent = dFrame })
 
-    local dropLabel = Utility.Create("TextLabel", {
-        Name = "Label",
-        Size = UDim2.new(0.45, 0, 0, dropClosedHeight),
-        Position = UDim2.new(0, 8, 0, 0),
+    Utility.Create("TextLabel", {
+        Size = UDim2.new(0.4, 0, 0, dClosedH),
+        Position = UDim2.new(0, 7, 0, 0),
         BackgroundTransparency = 1,
         Font = Enum.Font.Gotham,
-        TextSize = 11 * SCALE_FACTOR,
+        TextSize = 10 * SCALE,
         TextColor3 = Theme.TextSecondary,
-        Text = dropName,
+        Text = dName,
         TextXAlignment = Enum.TextXAlignment.Left,
         ZIndex = 14,
-        Parent = dropFrame,
+        Parent = dFrame,
     })
 
-    local selectedLabel = Utility.Create("TextLabel", {
-        Name = "Selected",
+    local selLabel = Utility.Create("TextLabel", {
         AnchorPoint = Vector2.new(1, 0),
-        Size = UDim2.new(0.5, -8, 0, dropClosedHeight),
-        Position = UDim2.new(1, -25 * SCALE_FACTOR, 0, 0),
+        Size = UDim2.new(0.5, -8, 0, dClosedH),
+        Position = UDim2.new(1, -22 * SCALE, 0, 0),
         BackgroundTransparency = 1,
         Font = Enum.Font.GothamMedium,
-        TextSize = 11 * SCALE_FACTOR,
+        TextSize = 10 * SCALE,
         TextColor3 = Library.CurrentAccent,
-        Text = defaultOption,
+        Text = def,
         TextXAlignment = Enum.TextXAlignment.Right,
         TextTruncate = Enum.TextTruncate.AtEnd,
         ZIndex = 14,
-        Parent = dropFrame,
+        Parent = dFrame,
     })
-    AccentEngine:RegisterAccent(selectedLabel, "TextColor3")
+    AccentEngine:Register(selLabel, "TextColor3")
 
     local arrow = Utility.Create("TextLabel", {
-        Name = "Arrow",
         AnchorPoint = Vector2.new(1, 0.5),
-        Position = UDim2.new(1, -6, 0, dropClosedHeight / 2),
-        Size = UDim2.new(0, 16 * SCALE_FACTOR, 0, 16 * SCALE_FACTOR),
+        Position = UDim2.new(1, -5, 0, dClosedH / 2),
+        Size = UDim2.new(0, 14, 0, 14),
         BackgroundTransparency = 1,
         Font = Enum.Font.GothamBold,
-        TextSize = 12 * SCALE_FACTOR,
+        TextSize = 10 * SCALE,
         TextColor3 = Theme.TextDim,
         Text = "▼",
         ZIndex = 14,
-        Parent = dropFrame,
+        Parent = dFrame,
     })
 
-    -- Options container
-    local optionsContainer = Utility.Create("Frame", {
-        Name = "Options",
-        Position = UDim2.new(0, 4, 0, dropClosedHeight),
-        Size = UDim2.new(1, -8, 0, 0),
+    local optsCont = Utility.Create("Frame", {
+        Position = UDim2.new(0, 3, 0, dClosedH),
+        Size = UDim2.new(1, -6, 0, 0),
         BackgroundTransparency = 1,
-        ClipsDescendants = true,
         ZIndex = 14,
-        Parent = dropFrame,
+        Parent = dFrame,
     })
-    local optLayout = Utility.Create("UIListLayout", {
+    Utility.Create("UIListLayout", {
         SortOrder = Enum.SortOrder.LayoutOrder,
-        Padding = UDim.new(0, 2),
-        Parent = optionsContainer,
+        Padding = UDim.new(0, 1),
+        Parent = optsCont,
     })
 
-    -- Create option buttons
-    local function buildOptions()
-        for _, child in pairs(optionsContainer:GetChildren()) do
-            if child:IsA("TextButton") then child:Destroy() end
+    local function buildOpts()
+        for _, c in pairs(optsCont:GetChildren()) do
+            if c:IsA("TextButton") then c:Destroy() end
         end
-        for i, option in ipairs(options) do
-            local optBtn = Utility.Create("TextButton", {
-                Name = "Option_" .. option,
-                Size = UDim2.new(1, 0, 0, dropItemHeight),
+        for i, opt in ipairs(options) do
+            local ob = Utility.Create("TextButton", {
+                Size = UDim2.new(1, 0, 0, dItemH),
                 BackgroundColor3 = Theme.ModuleBackground,
-                BackgroundTransparency = 0.2,
+                BackgroundTransparency = 0.15,
                 Font = Enum.Font.Gotham,
-                TextSize = 11 * SCALE_FACTOR,
-                TextColor3 = (option == defaultOption) and Library.CurrentAccent or Theme.TextSecondary,
-                Text = option,
+                TextSize = 10 * SCALE,
+                TextColor3 = opt == def and Library.CurrentAccent or Theme.TextSecondary,
+                Text = opt,
                 BorderSizePixel = 0,
                 ZIndex = 15,
                 LayoutOrder = i,
-                Parent = optionsContainer,
+                AutoButtonColor = false,
+                Parent = optsCont,
             })
-            Utility.Create("UICorner", { CornerRadius = UDim.new(0, 3), Parent = optBtn })
+            Utility.Create("UICorner", { CornerRadius = UDim.new(0, 3), Parent = ob })
+            if opt == def then AccentEngine:Register(ob, "TextColor3") end
 
-            if option == defaultOption then
-                AccentEngine:RegisterAccent(optBtn, "TextColor3")
-            end
-
-            optBtn.MouseButton1Click:Connect(function()
-                Library.Flags[flagName] = option
-                selectedLabel.Text = option
+            ob.MouseButton1Click:Connect(function()
+                Library.Flags[flag] = opt
+                selLabel.Text = opt
                 Utility.ClickSound()
-
-                -- Reset all option colors, highlight selected
-                for _, child in pairs(optionsContainer:GetChildren()) do
-                    if child:IsA("TextButton") then
-                        if child.Text == option then
-                            child.TextColor3 = Library.CurrentAccent
-                            AccentEngine:RegisterAccent(child, "TextColor3")
+                for _, c in pairs(optsCont:GetChildren()) do
+                    if c:IsA("TextButton") then
+                        if c.Text == opt then
+                            c.TextColor3 = Library.CurrentAccent
+                            AccentEngine:Register(c, "TextColor3")
                         else
-                            Utility.QuickTween(child, 0.15, { TextColor3 = Theme.TextSecondary })
+                            Utility.Tween(c, 0.12, { TextColor3 = Theme.TextSecondary })
                         end
                     end
                 end
-
-                pcall(callback, option)
-                ConfigManager:AutoSaveCheck()
-
-                -- Close dropdown
-                dropOpen = false
-                Utility.QuickTween(arrow, 0.2, { Rotation = 0 })
-                local closedSize = UDim2.new(1, 0, 0, dropClosedHeight)
-                Utility.QuickTween(dropFrame, 0.25, { Size = closedSize })
+                pcall(cb, opt)
+                ConfigManager:AutoCheck()
+                -- Close
+                dOpen = false
+                Utility.Spring(arrow, 0.2, { Rotation = 0 })
+                Utility.Tween(dFrame, 0.2, { Size = UDim2.new(1, 0, 0, dClosedH) })
                 task.defer(function() self._UpdateElementSize() end)
             end)
 
-            -- Hover
-            optBtn.MouseEnter:Connect(function()
-                Utility.QuickTween(optBtn, 0.1, { BackgroundTransparency = 0 })
+            ob.MouseEnter:Connect(function()
+                Utility.Tween(ob, 0.1, { BackgroundTransparency = 0 })
             end)
-            optBtn.MouseLeave:Connect(function()
-                Utility.QuickTween(optBtn, 0.1, { BackgroundTransparency = 0.2 })
+            ob.MouseLeave:Connect(function()
+                Utility.Tween(ob, 0.1, { BackgroundTransparency = 0.15 })
             end)
         end
     end
-    buildOptions()
+    buildOpts()
 
-    -- Toggle dropdown open/close
-    local headerBtn = Utility.Create("TextButton", {
-        Size = UDim2.new(1, 0, 0, dropClosedHeight),
-        BackgroundTransparency = 1,
-        Text = "",
-        ZIndex = 16,
-        Parent = dropFrame,
+    local hdrBtn = Utility.Create("TextButton", {
+        Size = UDim2.new(1, 0, 0, dClosedH),
+        BackgroundTransparency = 1, Text = "",
+        ZIndex = 16, Parent = dFrame,
     })
-
-    headerBtn.MouseButton1Click:Connect(function()
-        dropOpen = not dropOpen
+    hdrBtn.MouseButton1Click:Connect(function()
+        dOpen = not dOpen
         Utility.ClickSound()
-        if dropOpen then
-            Utility.QuickTween(arrow, 0.2, { Rotation = 180 })
-            local totalH = dropClosedHeight + #options * (dropItemHeight + 2) + 6
-            Utility.QuickTween(dropFrame, 0.25, { Size = UDim2.new(1, 0, 0, totalH) })
-            optionsContainer.Size = UDim2.new(1, -8, 0, #options * (dropItemHeight + 2))
-        else
-            Utility.QuickTween(arrow, 0.2, { Rotation = 0 })
-            Utility.QuickTween(dropFrame, 0.25, { Size = UDim2.new(1, 0, 0, dropClosedHeight) })
+        Utility.Spring(arrow, 0.25, { Rotation = dOpen and 180 or 0 })
+        local totalH = dOpen and (dClosedH + #options * (dItemH + 1) + 6) or dClosedH
+        Utility.Tween(dFrame, 0.25, { Size = UDim2.new(1, 0, 0, totalH) })
+        if dOpen then
+            optsCont.Size = UDim2.new(1, -6, 0, #options * (dItemH + 1))
         end
         task.defer(function() self._UpdateElementSize() end)
     end)
 
-    local element = {
-        Type = "Dropdown",
-        Frame = dropFrame,
-        SetValue = function(_, val)
-            if table.find(options, val) then
-                Library.Flags[flagName] = val
-                selectedLabel.Text = val
-                for _, child in pairs(optionsContainer:GetChildren()) do
-                    if child:IsA("TextButton") then
-                        if child.Text == val then
-                            child.TextColor3 = Library.CurrentAccent
-                        else
-                            child.TextColor3 = Theme.TextSecondary
-                        end
+    local elem = {
+        Type = "Dropdown", Frame = dFrame,
+        SetValue = function(_, v)
+            if table.find(options, v) then
+                Library.Flags[flag] = v; selLabel.Text = v
+                for _, c in pairs(optsCont:GetChildren()) do
+                    if c:IsA("TextButton") then
+                        c.TextColor3 = c.Text == v and Library.CurrentAccent or Theme.TextSecondary
                     end
                 end
-                pcall(callback, val)
+                pcall(cb, v)
             end
         end,
-        GetValue = function()
-            return Library.Flags[flagName]
-        end,
-        UpdateOptions = function(_, newOptions)
-            options = newOptions
-            buildOptions()
-        end,
+        GetValue = function() return Library.Flags[flag] end,
+        UpdateOptions = function(_, newOpts) options = newOpts; buildOpts() end,
     }
-    table.insert(self.Elements, element)
-    task.defer(function() self._UpdateElementSize() end)
-    return element
+    table.insert(self.Elements, elem)
+    self._CheckArrow()
+    task.defer(self._UpdateElementSize)
+    return elem
 end
 
 -- ============================================================
@@ -1801,26 +2170,25 @@ end
 function Module:CreateColorPicker(info)
     info = info or {}
     local cpName = info.Name or "Color"
-    local flagName = info.Flag or (self.Flag .. "_" .. cpName)
-    local defaultColor = info.Default or Color3.fromRGB(255, 0, 0)
-    local callback = info.Callback or function() end
+    local flag = info.Flag or (self.Flag .. "_" .. cpName)
+    local def = info.Default or Color3.fromRGB(255, 0, 0)
+    local cb = info.Callback or function() end
 
-    if Library.Flags[flagName] ~= nil and typeof(Library.Flags[flagName]) == "Color3" then
-        defaultColor = Library.Flags[flagName]
+    if Library.Flags[flag] ~= nil and typeof(Library.Flags[flag]) == "Color3" then
+        def = Library.Flags[flag]
     end
-    Library.Flags[flagName] = defaultColor
+    Library.Flags[flag] = def
 
-    local cpClosedHeight = math.max(28 * SCALE_FACTOR, MIN_TOUCH)
-    local cpOpenHeight = 120 * SCALE_FACTOR
+    local cpClosedH = math.max(26 * SCALE, MIN_TOUCH)
+    local cpOpenH = 110 * SCALE
     local cpOpen = false
-
-    local h, s, v = Color3.toHSV(defaultColor)
+    local h, s, v = Color3.toHSV(def)
 
     local cpFrame = Utility.Create("Frame", {
-        Name = "ColorPicker_" .. cpName,
-        Size = UDim2.new(1, 0, 0, cpClosedHeight),
+        Name = "CP_" .. cpName,
+        Size = UDim2.new(1, 0, 0, cpClosedH),
         BackgroundColor3 = Theme.ElementBackground,
-        BackgroundTransparency = 0.3,
+        BackgroundTransparency = 0.25,
         BorderSizePixel = 0,
         ClipsDescendants = true,
         ZIndex = 13,
@@ -1828,13 +2196,12 @@ function Module:CreateColorPicker(info)
     })
     Utility.Create("UICorner", { CornerRadius = UDim.new(0, 4), Parent = cpFrame })
 
-    local cpLabel = Utility.Create("TextLabel", {
-        Name = "Label",
-        Size = UDim2.new(1, -40 * SCALE_FACTOR, 0, cpClosedHeight),
-        Position = UDim2.new(0, 8, 0, 0),
+    Utility.Create("TextLabel", {
+        Size = UDim2.new(1, -35 * SCALE, 0, cpClosedH),
+        Position = UDim2.new(0, 7, 0, 0),
         BackgroundTransparency = 1,
         Font = Enum.Font.Gotham,
-        TextSize = 11 * SCALE_FACTOR,
+        TextSize = 10 * SCALE,
         TextColor3 = Theme.TextSecondary,
         Text = cpName,
         TextXAlignment = Enum.TextXAlignment.Left,
@@ -1842,249 +2209,190 @@ function Module:CreateColorPicker(info)
         Parent = cpFrame,
     })
 
-    -- Color preview
-    local colorPreview = Utility.Create("Frame", {
-        Name = "Preview",
+    local preview = Utility.Create("Frame", {
         AnchorPoint = Vector2.new(1, 0.5),
-        Position = UDim2.new(1, -8, 0, cpClosedHeight / 2),
-        Size = UDim2.new(0, 22 * SCALE_FACTOR, 0, 16 * SCALE_FACTOR),
-        BackgroundColor3 = defaultColor,
+        Position = UDim2.new(1, -7, 0, cpClosedH / 2),
+        Size = UDim2.new(0, 20 * SCALE, 0, 14 * SCALE),
+        BackgroundColor3 = def,
         BorderSizePixel = 0,
         ZIndex = 14,
         Parent = cpFrame,
     })
-    Utility.Create("UICorner", { CornerRadius = UDim.new(0, 4), Parent = colorPreview })
-    Utility.Create("UIStroke", { Color = Theme.ElementBorder, Thickness = 1, Parent = colorPreview })
+    Utility.Create("UICorner", { CornerRadius = UDim.new(0, 4), Parent = preview })
+    Utility.Create("UIStroke", { Color = Theme.ElementBorder, Thickness = 1, Parent = preview })
 
-    -- Saturation-Value field
-    local svFieldSize = 80 * SCALE_FACTOR
+    local svSize = 75 * SCALE
     local svField = Utility.Create("ImageLabel", {
-        Name = "SVField",
-        Position = UDim2.new(0, 8, 0, cpClosedHeight + 5),
-        Size = UDim2.new(0, svFieldSize, 0, svFieldSize),
+        Position = UDim2.new(0, 7, 0, cpClosedH + 4),
+        Size = UDim2.new(0, svSize, 0, svSize),
         BackgroundColor3 = Color3.fromHSV(h, 1, 1),
         BorderSizePixel = 0,
-        Image = "rbxassetid://4155801252", -- white to transparent gradient
+        Image = "rbxassetid://4155801252",
         ZIndex = 15,
         Parent = cpFrame,
     })
     Utility.Create("UICorner", { CornerRadius = UDim.new(0, 4), Parent = svField })
-
-    -- Darkness overlay
-    local darkOverlay = Utility.Create("ImageLabel", {
-        Name = "DarkOverlay",
+    Utility.Create("ImageLabel", {
         Size = UDim2.new(1, 0, 1, 0),
         BackgroundTransparency = 1,
         Image = "rbxassetid://4155801252",
         ImageColor3 = Color3.new(0, 0, 0),
-        ImageTransparency = 0,
-        ScaleType = Enum.ScaleType.Stretch,
-        ZIndex = 16,
         Rotation = 270,
+        ZIndex = 16,
         Parent = svField,
     })
 
-    -- SV cursor
-    local svCursor = Utility.Create("Frame", {
-        Name = "Cursor",
+    local svCur = Utility.Create("Frame", {
         AnchorPoint = Vector2.new(0.5, 0.5),
         Position = UDim2.new(s, 0, 1 - v, 0),
-        Size = UDim2.new(0, 10 * SCALE_FACTOR, 0, 10 * SCALE_FACTOR),
+        Size = UDim2.new(0, 9 * SCALE, 0, 9 * SCALE),
         BackgroundColor3 = Color3.new(1, 1, 1),
-        BackgroundTransparency = 0.1,
         BorderSizePixel = 0,
         ZIndex = 17,
         Parent = svField,
     })
-    Utility.Create("UICorner", { CornerRadius = UDim.new(1, 0), Parent = svCursor })
-    Utility.Create("UIStroke", { Color = Color3.new(0, 0, 0), Thickness = 1.5, Parent = svCursor })
+    Utility.Create("UICorner", { CornerRadius = UDim.new(1, 0), Parent = svCur })
+    Utility.Create("UIStroke", { Color = Color3.new(0, 0, 0), Thickness = 1.5, Parent = svCur })
 
-    -- Hue bar
-    local hueBarWidth = 16 * SCALE_FACTOR
+    local hueW = 14 * SCALE
     local hueBar = Utility.Create("Frame", {
-        Name = "HueBar",
-        Position = UDim2.new(0, 8 + svFieldSize + 8, 0, cpClosedHeight + 5),
-        Size = UDim2.new(0, hueBarWidth, 0, svFieldSize),
+        Position = UDim2.new(0, 7 + svSize + 6, 0, cpClosedH + 4),
+        Size = UDim2.new(0, hueW, 0, svSize),
         BackgroundColor3 = Color3.new(1, 1, 1),
         BorderSizePixel = 0,
         ZIndex = 15,
         Parent = cpFrame,
     })
     Utility.Create("UICorner", { CornerRadius = UDim.new(0, 4), Parent = hueBar })
-    -- Hue gradient
-    local hueGradient = Utility.Create("UIGradient", {
+    Utility.Create("UIGradient", {
         Color = ColorSequence.new({
-            ColorSequenceKeypoint.new(0, Color3.fromRGB(255, 0, 0)),
-            ColorSequenceKeypoint.new(0.167, Color3.fromRGB(255, 255, 0)),
-            ColorSequenceKeypoint.new(0.333, Color3.fromRGB(0, 255, 0)),
-            ColorSequenceKeypoint.new(0.5, Color3.fromRGB(0, 255, 255)),
-            ColorSequenceKeypoint.new(0.667, Color3.fromRGB(0, 0, 255)),
-            ColorSequenceKeypoint.new(0.833, Color3.fromRGB(255, 0, 255)),
-            ColorSequenceKeypoint.new(1, Color3.fromRGB(255, 0, 0)),
+            ColorSequenceKeypoint.new(0, Color3.fromRGB(255,0,0)),
+            ColorSequenceKeypoint.new(0.167, Color3.fromRGB(255,255,0)),
+            ColorSequenceKeypoint.new(0.333, Color3.fromRGB(0,255,0)),
+            ColorSequenceKeypoint.new(0.5, Color3.fromRGB(0,255,255)),
+            ColorSequenceKeypoint.new(0.667, Color3.fromRGB(0,0,255)),
+            ColorSequenceKeypoint.new(0.833, Color3.fromRGB(255,0,255)),
+            ColorSequenceKeypoint.new(1, Color3.fromRGB(255,0,0)),
         }),
         Rotation = 90,
         Parent = hueBar,
     })
 
-    -- Hue cursor
-    local hueCursor = Utility.Create("Frame", {
-        Name = "HueCursor",
+    local hueCur = Utility.Create("Frame", {
         AnchorPoint = Vector2.new(0.5, 0.5),
         Position = UDim2.new(0.5, 0, h, 0),
-        Size = UDim2.new(1, 4, 0, 5 * SCALE_FACTOR),
+        Size = UDim2.new(1, 4, 0, 4 * SCALE),
         BackgroundColor3 = Color3.new(1, 1, 1),
         BorderSizePixel = 0,
         ZIndex = 16,
         Parent = hueBar,
     })
-    Utility.Create("UICorner", { CornerRadius = UDim.new(0, 2), Parent = hueCursor })
-    Utility.Create("UIStroke", { Color = Color3.new(0, 0, 0), Thickness = 1, Parent = hueCursor })
+    Utility.Create("UICorner", { CornerRadius = UDim.new(0, 2), Parent = hueCur })
 
-    -- HEX input
     local hexBox = Utility.Create("TextBox", {
-        Name = "HexInput",
-        Position = UDim2.new(0, 8 + svFieldSize + 8 + hueBarWidth + 8, 0, cpClosedHeight + 5),
-        Size = UDim2.new(1, -(8 + svFieldSize + 8 + hueBarWidth + 8 + 8), 0, 22 * SCALE_FACTOR),
+        Position = UDim2.new(0, 7 + svSize + 6 + hueW + 6, 0, cpClosedH + 4),
+        Size = UDim2.new(1, -(7 + svSize + 6 + hueW + 6 + 7), 0, 20 * SCALE),
         BackgroundColor3 = Theme.SliderBackground,
-        BackgroundTransparency = 0.2,
+        BackgroundTransparency = 0.15,
         Font = Enum.Font.Code,
-        TextSize = 10 * SCALE_FACTOR,
+        TextSize = 9 * SCALE,
         TextColor3 = Theme.TextPrimary,
-        Text = "#" .. string.format("%02X%02X%02X", math.floor(defaultColor.R*255), math.floor(defaultColor.G*255), math.floor(defaultColor.B*255)),
+        Text = string.format("#%02X%02X%02X", def.R*255, def.G*255, def.B*255),
         BorderSizePixel = 0,
         ClearTextOnFocus = false,
         ZIndex = 15,
-        PlaceholderText = "#FFFFFF",
         Parent = cpFrame,
     })
     Utility.Create("UICorner", { CornerRadius = UDim.new(0, 3), Parent = hexBox })
 
-    local function updateColor()
-        local newColor = Color3.fromHSV(h, s, v)
-        Library.Flags[flagName] = newColor
-        colorPreview.BackgroundColor3 = newColor
+    local function updColor()
+        local c = Color3.fromHSV(h, s, v)
+        Library.Flags[flag] = c
+        preview.BackgroundColor3 = c
         svField.BackgroundColor3 = Color3.fromHSV(h, 1, 1)
-        svCursor.Position = UDim2.new(s, 0, 1 - v, 0)
-        hueCursor.Position = UDim2.new(0.5, 0, h, 0)
-        hexBox.Text = "#" .. string.format("%02X%02X%02X", math.floor(newColor.R*255), math.floor(newColor.G*255), math.floor(newColor.B*255))
-        pcall(callback, newColor)
-        ConfigManager:AutoSaveCheck()
+        svCur.Position = UDim2.new(s, 0, 1 - v, 0)
+        hueCur.Position = UDim2.new(0.5, 0, h, 0)
+        hexBox.Text = string.format("#%02X%02X%02X", c.R*255, c.G*255, c.B*255)
+        pcall(cb, c)
+        ConfigManager:AutoCheck()
     end
 
-    -- SV field interaction
-    local svDragging = false
-    svField.InputBegan:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-            svDragging = true
-            local pos = input.Position
-            local absPos = svField.AbsolutePosition
-            local absSize = svField.AbsoluteSize
-            s = math.clamp((pos.X - absPos.X) / absSize.X, 0, 1)
-            v = 1 - math.clamp((pos.Y - absPos.Y) / absSize.Y, 0, 1)
-            updateColor()
+    local svDrag, hueDrag = false, false
+
+    svField.InputBegan:Connect(function(inp)
+        if inp.UserInputType == Enum.UserInputType.MouseButton1 or inp.UserInputType == Enum.UserInputType.Touch then
+            svDrag = true
+            local p, ap, as = inp.Position, svField.AbsolutePosition, svField.AbsoluteSize
+            s = math.clamp((p.X - ap.X)/as.X, 0, 1)
+            v = 1 - math.clamp((p.Y - ap.Y)/as.Y, 0, 1)
+            updColor()
         end
+    end)
+    local svc1 = UserInputService.InputChanged:Connect(function(inp)
+        if svDrag and (inp.UserInputType == Enum.UserInputType.MouseMovement or inp.UserInputType == Enum.UserInputType.Touch) then
+            local p, ap, as = inp.Position, svField.AbsolutePosition, svField.AbsoluteSize
+            s = math.clamp((p.X - ap.X)/as.X, 0, 1)
+            v = 1 - math.clamp((p.Y - ap.Y)/as.Y, 0, 1)
+            updColor()
+        end
+    end)
+    local svc2 = UserInputService.InputEnded:Connect(function(inp)
+        if inp.UserInputType == Enum.UserInputType.MouseButton1 or inp.UserInputType == Enum.UserInputType.Touch then svDrag = false end
     end)
 
-    local svConn1 = UserInputService.InputChanged:Connect(function(input)
-        if svDragging then
-            if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
-                local pos = input.Position
-                local absPos = svField.AbsolutePosition
-                local absSize = svField.AbsoluteSize
-                s = math.clamp((pos.X - absPos.X) / absSize.X, 0, 1)
-                v = 1 - math.clamp((pos.Y - absPos.Y) / absSize.Y, 0, 1)
-                updateColor()
-            end
+    hueBar.InputBegan:Connect(function(inp)
+        if inp.UserInputType == Enum.UserInputType.MouseButton1 or inp.UserInputType == Enum.UserInputType.Touch then
+            hueDrag = true
+            h = math.clamp((inp.Position.Y - hueBar.AbsolutePosition.Y)/hueBar.AbsoluteSize.Y, 0, 0.999)
+            updColor()
         end
     end)
-    local svConn2 = UserInputService.InputEnded:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-            svDragging = false
+    local hc1 = UserInputService.InputChanged:Connect(function(inp)
+        if hueDrag and (inp.UserInputType == Enum.UserInputType.MouseMovement or inp.UserInputType == Enum.UserInputType.Touch) then
+            h = math.clamp((inp.Position.Y - hueBar.AbsolutePosition.Y)/hueBar.AbsoluteSize.Y, 0, 0.999)
+            updColor()
         end
     end)
-    table.insert(Library.Connections, svConn1)
-    table.insert(Library.Connections, svConn2)
+    local hc2 = UserInputService.InputEnded:Connect(function(inp)
+        if inp.UserInputType == Enum.UserInputType.MouseButton1 or inp.UserInputType == Enum.UserInputType.Touch then hueDrag = false end
+    end)
 
-    -- Hue bar interaction
-    local hueDragging = false
-    hueBar.InputBegan:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-            hueDragging = true
-            local pos = input.Position
-            local absPos = hueBar.AbsolutePosition
-            local absSize = hueBar.AbsoluteSize
-            h = math.clamp((pos.Y - absPos.Y) / absSize.Y, 0, 0.999)
-            updateColor()
-        end
-    end)
-    local hueConn1 = UserInputService.InputChanged:Connect(function(input)
-        if hueDragging then
-            if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
-                local pos = input.Position
-                local absPos = hueBar.AbsolutePosition
-                local absSize = hueBar.AbsoluteSize
-                h = math.clamp((pos.Y - absPos.Y) / absSize.Y, 0, 0.999)
-                updateColor()
-            end
-        end
-    end)
-    local hueConn2 = UserInputService.InputEnded:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-            hueDragging = false
-        end
-    end)
-    table.insert(Library.Connections, hueConn1)
-    table.insert(Library.Connections, hueConn2)
+    for _, c in ipairs({svc1,svc2,hc1,hc2}) do table.insert(Library.Connections, c) end
 
-    -- Hex input
-    hexBox.FocusLost:Connect(function(enterPressed)
-        local text = hexBox.Text:gsub("#", "")
-        if #text == 6 then
-            local r = tonumber(text:sub(1, 2), 16)
-            local g = tonumber(text:sub(3, 4), 16)
-            local b = tonumber(text:sub(5, 6), 16)
+    hexBox.FocusLost:Connect(function()
+        local txt = hexBox.Text:gsub("#","")
+        if #txt == 6 then
+            local r,g,b = tonumber(txt:sub(1,2),16), tonumber(txt:sub(3,4),16), tonumber(txt:sub(5,6),16)
             if r and g and b then
-                local newCol = Color3.fromRGB(r, g, b)
-                h, s, v = Color3.toHSV(newCol)
-                updateColor()
+                h,s,v = Color3.toHSV(Color3.fromRGB(r,g,b))
+                updColor()
             end
         end
     end)
 
-    -- Toggle open/close
-    local toggleArea = Utility.Create("TextButton", {
-        Size = UDim2.new(1, 0, 0, cpClosedHeight),
-        BackgroundTransparency = 1,
-        Text = "",
-        ZIndex = 16,
-        Parent = cpFrame,
+    local togArea = Utility.Create("TextButton", {
+        Size = UDim2.new(1, 0, 0, cpClosedH),
+        BackgroundTransparency = 1, Text = "",
+        ZIndex = 16, Parent = cpFrame,
     })
-
-    toggleArea.MouseButton1Click:Connect(function()
+    togArea.MouseButton1Click:Connect(function()
         cpOpen = not cpOpen
         Utility.ClickSound()
-        if cpOpen then
-            Utility.QuickTween(cpFrame, 0.25, { Size = UDim2.new(1, 0, 0, cpClosedHeight + cpOpenHeight) })
-        else
-            Utility.QuickTween(cpFrame, 0.25, { Size = UDim2.new(1, 0, 0, cpClosedHeight) })
-        end
+        Utility.Tween(cpFrame, 0.25, {
+            Size = UDim2.new(1, 0, 0, cpOpen and (cpClosedH + cpOpenH) or cpClosedH)
+        })
         task.defer(function() self._UpdateElementSize() end)
     end)
 
-    local element = {
-        Type = "ColorPicker",
-        Frame = cpFrame,
-        SetValue = function(_, color)
-            h, s, v = Color3.toHSV(color)
-            updateColor()
-        end,
-        GetValue = function()
-            return Color3.fromHSV(h, s, v)
-        end,
+    local elem = {
+        Type = "ColorPicker", Frame = cpFrame,
+        SetValue = function(_, c) h,s,v = Color3.toHSV(c); updColor() end,
+        GetValue = function() return Color3.fromHSV(h,s,v) end,
     }
-    table.insert(self.Elements, element)
-    task.defer(function() self._UpdateElementSize() end)
-    return element
+    table.insert(self.Elements, elem)
+    self._CheckArrow()
+    task.defer(self._UpdateElementSize)
+    return elem
 end
 
 -- ============================================================
@@ -2092,93 +2400,80 @@ end
 -- ============================================================
 function Module:CreateTextBox(info)
     info = info or {}
-    local tbName = info.Name or "TextBox"
-    local flagName = info.Flag or (self.Flag .. "_" .. tbName)
-    local defaultText = info.Default or ""
-    local placeholder = info.Placeholder or "Enter text..."
-    local callback = info.Callback or function() end
+    local tName = info.Name or "TextBox"
+    local flag = info.Flag or (self.Flag .. "_" .. tName)
+    local def = info.Default or ""
+    local ph = info.Placeholder or "Enter..."
+    local cb = info.Callback or function() end
 
-    if Library.Flags[flagName] ~= nil and type(Library.Flags[flagName]) == "string" then
-        defaultText = Library.Flags[flagName]
-    end
-    Library.Flags[flagName] = defaultText
+    if Library.Flags[flag] ~= nil and type(Library.Flags[flag]) == "string" then def = Library.Flags[flag] end
+    Library.Flags[flag] = def
 
-    local tbHeight = math.max(45 * SCALE_FACTOR, MIN_TOUCH + 10)
+    local tH = math.max(42 * SCALE, MIN_TOUCH + 8)
 
-    local tbFrame = Utility.Create("Frame", {
-        Name = "TextBox_" .. tbName,
-        Size = UDim2.new(1, 0, 0, tbHeight),
+    local tFrame = Utility.Create("Frame", {
+        Name = "TB_" .. tName,
+        Size = UDim2.new(1, 0, 0, tH),
         BackgroundColor3 = Theme.ElementBackground,
-        BackgroundTransparency = 0.3,
+        BackgroundTransparency = 0.25,
         BorderSizePixel = 0,
         ZIndex = 13,
         Parent = self.ElementsContainer,
     })
-    Utility.Create("UICorner", { CornerRadius = UDim.new(0, 4), Parent = tbFrame })
+    Utility.Create("UICorner", { CornerRadius = UDim.new(0, 4), Parent = tFrame })
 
-    local tbLabel = Utility.Create("TextLabel", {
-        Name = "Label",
-        Size = UDim2.new(1, -10, 0, 16 * SCALE_FACTOR),
-        Position = UDim2.new(0, 8, 0, 2),
+    Utility.Create("TextLabel", {
+        Size = UDim2.new(1, -8, 0, 14 * SCALE),
+        Position = UDim2.new(0, 7, 0, 2),
         BackgroundTransparency = 1,
         Font = Enum.Font.Gotham,
-        TextSize = 10 * SCALE_FACTOR,
+        TextSize = 9.5 * SCALE,
         TextColor3 = Theme.TextDim,
-        Text = tbName,
+        Text = tName,
         TextXAlignment = Enum.TextXAlignment.Left,
         ZIndex = 14,
-        Parent = tbFrame,
+        Parent = tFrame,
     })
 
-    local inputBox = Utility.Create("TextBox", {
-        Name = "Input",
-        Size = UDim2.new(1, -16, 0, 22 * SCALE_FACTOR),
-        Position = UDim2.new(0, 8, 0, 18 * SCALE_FACTOR),
+    local input = Utility.Create("TextBox", {
+        Size = UDim2.new(1, -14, 0, 20 * SCALE),
+        Position = UDim2.new(0, 7, 0, 16 * SCALE),
         BackgroundColor3 = Theme.SliderBackground,
-        BackgroundTransparency = 0.2,
+        BackgroundTransparency = 0.15,
         Font = Enum.Font.Gotham,
-        TextSize = 11 * SCALE_FACTOR,
+        TextSize = 10.5 * SCALE,
         TextColor3 = Theme.TextPrimary,
-        Text = defaultText,
-        PlaceholderText = placeholder,
+        Text = def,
+        PlaceholderText = ph,
         PlaceholderColor3 = Theme.TextDim,
         BorderSizePixel = 0,
         ClearTextOnFocus = false,
         ZIndex = 14,
-        Parent = tbFrame,
+        Parent = tFrame,
     })
-    Utility.Create("UICorner", { CornerRadius = UDim.new(0, 3), Parent = inputBox })
-    Utility.Create("UIPadding", {
-        PaddingLeft = UDim.new(0, 5),
-        PaddingRight = UDim.new(0, 5),
-        Parent = inputBox,
-    })
+    Utility.Create("UICorner", { CornerRadius = UDim.new(0, 3), Parent = input })
+    Utility.Create("UIPadding", { PaddingLeft = UDim.new(0, 5), PaddingRight = UDim.new(0, 5), Parent = input })
 
-    -- Focus highlight
-    inputBox.Focused:Connect(function()
-        Utility.QuickTween(inputBox, 0.15, { BackgroundColor3 = Theme.ModuleHover })
+    input.Focused:Connect(function()
+        Utility.Tween(input, 0.15, { BackgroundColor3 = Theme.ModuleHover })
+        Utility.ClickSound()
     end)
-    inputBox.FocusLost:Connect(function(enterPressed)
-        Utility.QuickTween(inputBox, 0.15, { BackgroundColor3 = Theme.SliderBackground })
-        Library.Flags[flagName] = inputBox.Text
-        pcall(callback, inputBox.Text)
-        ConfigManager:AutoSaveCheck()
+    input.FocusLost:Connect(function()
+        Utility.Tween(input, 0.15, { BackgroundColor3 = Theme.SliderBackground })
+        Library.Flags[flag] = input.Text
+        pcall(cb, input.Text)
+        ConfigManager:AutoCheck()
     end)
 
-    local element = {
-        Type = "TextBox",
-        Frame = tbFrame,
-        SetValue = function(_, val)
-            inputBox.Text = val
-            Library.Flags[flagName] = val
-        end,
-        GetValue = function()
-            return inputBox.Text
-        end,
+    local elem = {
+        Type = "TextBox", Frame = tFrame,
+        SetValue = function(_, v) input.Text = v; Library.Flags[flag] = v end,
+        GetValue = function() return input.Text end,
     }
-    table.insert(self.Elements, element)
-    task.defer(function() self._UpdateElementSize() end)
-    return element
+    table.insert(self.Elements, elem)
+    self._CheckArrow()
+    task.defer(self._UpdateElementSize)
+    return elem
 end
 
 -- ============================================================
@@ -2186,60 +2481,61 @@ end
 -- ============================================================
 function Module:CreateButton(info)
     info = info or {}
-    local btnName = info.Name or "Button"
-    local callback = info.Callback or function() end
+    local bName = info.Name or "Button"
+    local cb = info.Callback or function() end
 
-    local btnHeight = math.max(28 * SCALE_FACTOR, MIN_TOUCH)
+    local bH = math.max(26 * SCALE, MIN_TOUCH)
 
-    local btnFrame = Utility.Create("Frame", {
-        Name = "Button_" .. btnName,
-        Size = UDim2.new(1, 0, 0, btnHeight),
+    local bFrame = Utility.Create("Frame", {
+        Name = "Btn_" .. bName,
+        Size = UDim2.new(1, 0, 0, bH),
         BackgroundColor3 = Theme.ElementBackground,
-        BackgroundTransparency = 0.3,
+        BackgroundTransparency = 0.25,
         BorderSizePixel = 0,
         ClipsDescendants = true,
         ZIndex = 13,
         Parent = self.ElementsContainer,
     })
-    Utility.Create("UICorner", { CornerRadius = UDim.new(0, 4), Parent = btnFrame })
+    Utility.Create("UICorner", { CornerRadius = UDim.new(0, 4), Parent = bFrame })
 
     local btn = Utility.Create("TextButton", {
-        Name = "Btn",
         Size = UDim2.new(1, 0, 1, 0),
         BackgroundTransparency = 1,
         Font = Enum.Font.GothamMedium,
-        TextSize = 11 * SCALE_FACTOR,
+        TextSize = 10.5 * SCALE,
         TextColor3 = Theme.TextSecondary,
-        Text = btnName,
+        Text = bName,
         ZIndex = 14,
-        Parent = btnFrame,
+        AutoButtonColor = false,
+        Parent = bFrame,
     })
 
     btn.MouseButton1Click:Connect(function()
         Utility.ClickSound()
-        -- Button flash effect
-        Utility.QuickTween(btnFrame, 0.1, { BackgroundColor3 = Library.CurrentAccent })
-        task.delay(0.15, function()
-            Utility.QuickTween(btnFrame, 0.2, { BackgroundColor3 = Theme.ElementBackground })
+        -- Flash
+        Utility.Tween(bFrame, 0.08, { BackgroundColor3 = Library.CurrentAccent })
+        Utility.Spring(btn, 0.1, { TextColor3 = Theme.TextPrimary })
+        task.delay(0.12, function()
+            Utility.Tween(bFrame, 0.2, { BackgroundColor3 = Theme.ElementBackground })
+            Utility.Tween(btn, 0.2, { TextColor3 = Theme.TextSecondary })
         end)
-        -- Ripple
-        local absPos = btnFrame.AbsolutePosition
-        local absSize = btnFrame.AbsoluteSize
-        Utility.Ripple(btnFrame, absPos.X + absSize.X / 2, absPos.Y + absSize.Y / 2)
-        pcall(callback)
+        local mp = UserInputService:GetMouseLocation()
+        Utility.Ripple(bFrame, mp.X, mp.Y - GuiService:GetGuiInset().Y)
+        pcall(cb)
     end)
 
     btn.MouseEnter:Connect(function()
-        Utility.QuickTween(btn, 0.12, { TextColor3 = Theme.TextPrimary })
+        Utility.Tween(btn, 0.1, { TextColor3 = Theme.TextPrimary })
     end)
     btn.MouseLeave:Connect(function()
-        Utility.QuickTween(btn, 0.12, { TextColor3 = Theme.TextSecondary })
+        Utility.Tween(btn, 0.1, { TextColor3 = Theme.TextSecondary })
     end)
 
-    local element = { Type = "Button", Frame = btnFrame }
-    table.insert(self.Elements, element)
-    task.defer(function() self._UpdateElementSize() end)
-    return element
+    local elem = { Type = "Button", Frame = bFrame }
+    table.insert(self.Elements, elem)
+    self._CheckArrow()
+    task.defer(self._UpdateElementSize)
+    return elem
 end
 
 -- ============================================================
@@ -2247,47 +2543,43 @@ end
 -- ============================================================
 function Module:CreateLabel(info)
     info = info or {}
-    local labelText = info.Name or info.Text or "Label"
+    local text = info.Name or info.Text or "Label"
 
-    local lblHeight = math.max(22 * SCALE_FACTOR, 22)
+    local lH = math.max(20 * SCALE, 20)
 
-    local lblFrame = Utility.Create("Frame", {
-        Name = "Label_" .. labelText,
-        Size = UDim2.new(1, 0, 0, lblHeight),
+    local lFrame = Utility.Create("Frame", {
+        Name = "Lbl",
+        Size = UDim2.new(1, 0, 0, lH),
         BackgroundColor3 = Theme.ElementBackground,
-        BackgroundTransparency = 0.5,
+        BackgroundTransparency = 0.45,
         BorderSizePixel = 0,
         ZIndex = 13,
         Parent = self.ElementsContainer,
     })
-    Utility.Create("UICorner", { CornerRadius = UDim.new(0, 3), Parent = lblFrame })
+    Utility.Create("UICorner", { CornerRadius = UDim.new(0, 3), Parent = lFrame })
 
     local lbl = Utility.Create("TextLabel", {
-        Name = "Text",
-        Size = UDim2.new(1, -10, 1, 0),
-        Position = UDim2.new(0, 5, 0, 0),
+        Size = UDim2.new(1, -8, 1, 0),
+        Position = UDim2.new(0, 4, 0, 0),
         BackgroundTransparency = 1,
         Font = Enum.Font.Gotham,
-        TextSize = 10.5 * SCALE_FACTOR,
+        TextSize = 10 * SCALE,
         TextColor3 = Theme.TextDim,
-        Text = labelText,
+        Text = text,
         TextXAlignment = Enum.TextXAlignment.Left,
         TextWrapped = true,
         ZIndex = 14,
-        Parent = lblFrame,
+        Parent = lFrame,
     })
 
-    local element = {
-        Type = "Label",
-        Frame = lblFrame,
-        TextInstance = lbl,
-        SetText = function(_, text)
-            lbl.Text = text
-        end,
+    local elem = {
+        Type = "Label", Frame = lFrame, TextInstance = lbl,
+        SetText = function(_, t) lbl.Text = t end,
     }
-    table.insert(self.Elements, element)
-    task.defer(function() self._UpdateElementSize() end)
-    return element
+    table.insert(self.Elements, elem)
+    self._CheckArrow()
+    task.defer(self._UpdateElementSize)
+    return elem
 end
 
 -- ============================================================
@@ -2295,340 +2587,238 @@ end
 -- ============================================================
 function Module:CreateKeybind(info)
     info = info or {}
-    local kbName = info.Name or "Keybind"
-    local flagName = info.Flag or (self.Flag .. "_" .. kbName)
-    local defaultKey = info.Default or Enum.KeyCode.Unknown
-    local callback = info.Callback or function() end
+    local kName = info.Name or "Keybind"
+    local flag = info.Flag or (self.Flag .. "_" .. kName)
+    local def = info.Default or Enum.KeyCode.Unknown
+    local cb = info.Callback or function() end
 
-    if Library.Flags[flagName] ~= nil and typeof(Library.Flags[flagName]) == "EnumItem" then
-        defaultKey = Library.Flags[flagName]
-    end
-    Library.Flags[flagName] = defaultKey
+    if Library.Flags[flag] ~= nil and typeof(Library.Flags[flag]) == "EnumItem" then def = Library.Flags[flag] end
+    Library.Flags[flag] = def
 
-    local kbHeight = math.max(28 * SCALE_FACTOR, MIN_TOUCH)
+    local kH = math.max(26 * SCALE, MIN_TOUCH)
     local listening = false
 
-    local kbFrame = Utility.Create("Frame", {
-        Name = "Keybind_" .. kbName,
-        Size = UDim2.new(1, 0, 0, kbHeight),
+    local kFrame = Utility.Create("Frame", {
+        Name = "KB_" .. kName,
+        Size = UDim2.new(1, 0, 0, kH),
         BackgroundColor3 = Theme.ElementBackground,
-        BackgroundTransparency = 0.3,
+        BackgroundTransparency = 0.25,
         BorderSizePixel = 0,
         ZIndex = 13,
         Parent = self.ElementsContainer,
     })
-    Utility.Create("UICorner", { CornerRadius = UDim.new(0, 4), Parent = kbFrame })
+    Utility.Create("UICorner", { CornerRadius = UDim.new(0, 4), Parent = kFrame })
 
-    local kbLabel = Utility.Create("TextLabel", {
-        Name = "Label",
-        Size = UDim2.new(0.55, 0, 1, 0),
-        Position = UDim2.new(0, 8, 0, 0),
+    Utility.Create("TextLabel", {
+        Size = UDim2.new(0.5, 0, 1, 0),
+        Position = UDim2.new(0, 7, 0, 0),
         BackgroundTransparency = 1,
         Font = Enum.Font.Gotham,
-        TextSize = 11 * SCALE_FACTOR,
+        TextSize = 10 * SCALE,
         TextColor3 = Theme.TextSecondary,
-        Text = kbName,
+        Text = kName,
         TextXAlignment = Enum.TextXAlignment.Left,
         ZIndex = 14,
-        Parent = kbFrame,
+        Parent = kFrame,
     })
 
-    local keyDisplayText = defaultKey == Enum.KeyCode.Unknown and "None" or defaultKey.Name
     local keyBtn = Utility.Create("TextButton", {
-        Name = "KeyBtn",
         AnchorPoint = Vector2.new(1, 0.5),
-        Position = UDim2.new(1, -6, 0.5, 0),
-        Size = UDim2.new(0, 60 * SCALE_FACTOR, 0, 20 * SCALE_FACTOR),
+        Position = UDim2.new(1, -5, 0.5, 0),
+        Size = UDim2.new(0, 55 * SCALE, 0, 18 * SCALE),
         BackgroundColor3 = Theme.SliderBackground,
-        BackgroundTransparency = 0.2,
+        BackgroundTransparency = 0.15,
         Font = Enum.Font.GothamMedium,
-        TextSize = 10 * SCALE_FACTOR,
+        TextSize = 9.5 * SCALE,
         TextColor3 = Theme.TextPrimary,
-        Text = "[" .. keyDisplayText .. "]",
+        Text = "[" .. (def == Enum.KeyCode.Unknown and "None" or def.Name) .. "]",
         BorderSizePixel = 0,
         ZIndex = 14,
-        Parent = kbFrame,
+        AutoButtonColor = false,
+        Parent = kFrame,
     })
     Utility.Create("UICorner", { CornerRadius = UDim.new(0, 3), Parent = keyBtn })
 
     keyBtn.MouseButton1Click:Connect(function()
         listening = true
         keyBtn.Text = "[...]"
-        Utility.QuickTween(keyBtn, 0.15, { BackgroundColor3 = Library.CurrentAccent })
+        Utility.Tween(keyBtn, 0.15, { BackgroundColor3 = Library.CurrentAccent })
         Utility.ClickSound()
     end)
 
-    local kbConn = UserInputService.InputBegan:Connect(function(input, processed)
-        if listening then
-            if input.UserInputType == Enum.UserInputType.Keyboard then
-                local key = input.KeyCode
-                if key == Enum.KeyCode.Escape then
-                    -- Cancel
-                    listening = false
-                    keyBtn.Text = "[" .. (Library.Flags[flagName] == Enum.KeyCode.Unknown and "None" or Library.Flags[flagName].Name) .. "]"
-                    Utility.QuickTween(keyBtn, 0.15, { BackgroundColor3 = Theme.SliderBackground })
-                else
-                    Library.Flags[flagName] = key
-                    listening = false
-                    keyBtn.Text = "[" .. key.Name .. "]"
-                    Utility.QuickTween(keyBtn, 0.15, { BackgroundColor3 = Theme.SliderBackground })
-                    pcall(callback, key)
-                    ConfigManager:AutoSaveCheck()
-                end
+    local kc = UserInputService.InputBegan:Connect(function(input, gpe)
+        if listening and input.UserInputType == Enum.UserInputType.Keyboard then
+            if input.KeyCode == Enum.KeyCode.Escape then
+                listening = false
+                keyBtn.Text = "[" .. (Library.Flags[flag] == Enum.KeyCode.Unknown and "None" or Library.Flags[flag].Name) .. "]"
+            else
+                Library.Flags[flag] = input.KeyCode
+                listening = false
+                keyBtn.Text = "[" .. input.KeyCode.Name .. "]"
+                pcall(cb, input.KeyCode)
+                ConfigManager:AutoCheck()
             end
+            Utility.Tween(keyBtn, 0.15, { BackgroundColor3 = Theme.SliderBackground })
         end
     end)
-    table.insert(Library.Connections, kbConn)
+    table.insert(Library.Connections, kc)
 
-    local element = {
-        Type = "Keybind",
-        Frame = kbFrame,
-        SetValue = function(_, key)
-            Library.Flags[flagName] = key
-            keyBtn.Text = "[" .. (key == Enum.KeyCode.Unknown and "None" or key.Name) .. "]"
-            pcall(callback, key)
+    local elem = {
+        Type = "Keybind", Frame = kFrame,
+        SetValue = function(_, k)
+            Library.Flags[flag] = k
+            keyBtn.Text = "[" .. (k == Enum.KeyCode.Unknown and "None" or k.Name) .. "]"
+            pcall(cb, k)
         end,
-        GetValue = function()
-            return Library.Flags[flagName]
-        end,
+        GetValue = function() return Library.Flags[flag] end,
     }
-    table.insert(self.Elements, element)
-    task.defer(function() self._UpdateElementSize() end)
-    return element
+    table.insert(self.Elements, elem)
+    self._CheckArrow()
+    task.defer(self._UpdateElementSize)
+    return elem
 end
 
 -- ============================================================
--- BUILT-IN SETTINGS CATEGORY
+-- BUILT-IN SETTINGS
 -- ============================================================
 function Library:_BuildSettingsCategory()
-    local settingsCat = Library:CreateCategory({
-        Name = "Settings",
-        Position = UDim2.new(0.5, -100 * SCALE_FACTOR, 0.5, -180 * SCALE_FACTOR),
-        Width = 210,
+    local settings = Library:CreateCategory({ Name = "Settings", AutoShow = false })
+
+    -- Sound
+    local soundMod = settings:CreateModule({
+        Name = "Sound Effects", Flag = "S_Sound", Default = true,
+        Callback = function(s) Library.SoundEnabled = s end,
     })
 
-    -- ==== SOUND SETTINGS ====
-    local soundModule = settingsCat:CreateModule({
-        Name = "Sound Effects",
-        Flag = "Settings_SoundEnabled",
-        Default = true,
-        Callback = function(state)
-            Library.SoundEnabled = state
-        end,
-    })
-
-    -- ==== VISUAL CUSTOMIZATION ====
-    local visualModule = settingsCat:CreateModule({
-        Name = "Visual Settings",
-        Flag = "Settings_VisualModule",
-        Default = true,
+    -- Visual
+    local visMod = settings:CreateModule({
+        Name = "Visual", Flag = "S_Visual", Default = true,
         Callback = function() end,
     })
-    -- Force expand
-    visualModule.Expanded = true
 
-    -- Color Mode Dropdown
-    visualModule:CreateDropdown({
-        Name = "Color Mode",
-        Flag = "Settings_ColorMode",
-        Options = { "Static", "Breathing", "Rainbow", "Gradient" },
+    visMod:CreateDropdown({
+        Name = "Color Mode", Flag = "S_ColorMode",
+        Options = {"Static","Breathing","Rainbow","Gradient"},
         Default = Library.ColorMode,
-        Callback = function(mode)
-            Library.ColorMode = mode
-        end,
+        Callback = function(m) Library.ColorMode = m end,
     })
-
-    -- Dynamic Speed Slider
-    visualModule:CreateSlider({
-        Name = "Dynamic Speed",
-        Flag = "Settings_DynamicSpeed",
-        Min = 0.1,
-        Max = 5,
-        Default = Library.DynamicSpeed,
-        Increment = 0.1,
-        Suffix = "x",
-        Callback = function(val)
-            Library.DynamicSpeed = val
-        end,
+    visMod:CreateSlider({
+        Name = "Dynamic Speed", Flag = "S_DynSpeed",
+        Min = 0.1, Max = 5, Default = 1, Increment = 0.1, Suffix = "x",
+        Callback = function(v) Library.DynamicSpeed = v end,
     })
-
-    -- Accent Color Picker
-    visualModule:CreateColorPicker({
-        Name = "Accent Color",
-        Flag = "Settings_AccentColor",
+    visMod:CreateColorPicker({
+        Name = "Accent Color", Flag = "S_AccentColor",
         Default = Library.AccentColor,
-        Callback = function(color)
-            Library.AccentColor = color
-            if Library.ColorMode == "Static" then
-                Library.CurrentAccent = color
-            end
-        end,
+        Callback = function(c) Library.AccentColor = c; if Library.ColorMode == "Static" then Library.CurrentAccent = c end end,
     })
-
-    -- Background Transparency Slider
-    visualModule:CreateSlider({
-        Name = "BG Transparency",
-        Flag = "Settings_BGTransparency",
-        Min = 0,
-        Max = 1,
-        Default = Library.BackgroundTransparency,
-        Increment = 0.05,
-        Callback = function(val)
-            Library.BackgroundTransparency = val
+    visMod:CreateSlider({
+        Name = "BG Transparency", Flag = "S_BGTrans",
+        Min = 0, Max = 0.95, Default = Library.BackgroundTransparency, Increment = 0.05,
+        Callback = function(v)
+            Library.BackgroundTransparency = v
             for _, cat in ipairs(Library.Categories) do
-                if cat.Frame then
-                    Utility.QuickTween(cat.Frame, 0.2, { BackgroundTransparency = val })
+                if cat.Frame and cat.Frame.Visible then
+                    Utility.Tween(cat.Frame, 0.2, { BackgroundTransparency = v })
                 end
             end
         end,
     })
-
-    -- Mobile Ball Toggle
-    visualModule:CreateToggle({
-        Name = "Mobile Float Ball",
-        Flag = "Settings_MobileBall",
+    visMod:CreateToggle({
+        Name = "Mobile Ball", Flag = "S_MobBall",
         Default = Library.MobileBallVisible,
-        Callback = function(state)
-            Library.MobileBallVisible = state
-            if Library.FloatingBall then
-                Library.FloatingBall.Visible = IS_MOBILE and state
-            end
-        end,
+        Callback = function(s) Library.MobileBallVisible = s; Library.FloatingBall.Visible = IS_MOBILE and s end,
     })
 
-    -- Force update after element creation
-    task.defer(function() visualModule._UpdateElementSize() end)
-
-    -- ==== INTERACTION / CONFIG ====
-    local interactModule = settingsCat:CreateModule({
-        Name = "Interaction",
-        Flag = "Settings_InteractModule",
-        Default = true,
+    -- Interact
+    local intMod = settings:CreateModule({
+        Name = "Interaction", Flag = "S_Interact", Default = true,
         Callback = function() end,
     })
-    interactModule.Expanded = true
 
-    -- Toggle Key
-    interactModule:CreateKeybind({
-        Name = "Toggle Key",
-        Flag = "Settings_ToggleKey",
+    intMod:CreateKeybind({
+        Name = "Toggle Key", Flag = "S_TogKey",
         Default = Library.ToggleKey,
-        Callback = function(key)
-            Library.ToggleKey = key
-        end,
+        Callback = function(k) Library.ToggleKey = k end,
     })
-
-    -- Keybind active when hidden
-    interactModule:CreateToggle({
-        Name = "Keys When Hidden",
-        Flag = "Settings_KeysWhenHidden",
-        Default = Library.KeybindActiveWhenHidden,
-        Callback = function(state)
-            Library.KeybindActiveWhenHidden = state
-        end,
-    })
-
-    -- Watermark
-    interactModule:CreateToggle({
-        Name = "FPS/Ping Watermark",
-        Flag = "Settings_Watermark",
-        Default = Library.WatermarkEnabled,
-        Callback = function(state)
-            Library.WatermarkEnabled = state
-            if Library.Watermark then
-                Library.Watermark.Visible = state and Library.Visible
-            end
-        end,
-    })
-
-    -- ArrayList
-    interactModule:CreateToggle({
-        Name = "ArrayList",
-        Flag = "Settings_ArrayList",
-        Default = Library.ArrayListEnabled,
-        Callback = function(state)
-            Library.ArrayListEnabled = state
-            if Library.ArrayList then
-                Library.ArrayList.Visible = state and Library.Visible
-            end
-        end,
-    })
-
-    -- Auto Save
-    interactModule:CreateToggle({
-        Name = "Auto Save Config",
-        Flag = "Settings_AutoSave",
-        Default = Library.AutoSave,
-        Callback = function(state)
-            Library.AutoSave = state
-            if state then
-                ConfigManager:Save()
-            end
-        end,
-    })
-
-    task.defer(function() interactModule._UpdateElementSize() end)
-
-    -- ==== SYSTEM TOOLS ====
-    local systemModule = settingsCat:CreateModule({
-        Name = "System",
-        Flag = "Settings_SystemModule",
+    intMod:CreateToggle({
+        Name = "Keys When Hidden", Flag = "S_KeysHidden",
         Default = true,
+        Callback = function(s) Library.KeybindActiveWhenHidden = s end,
+    })
+    intMod:CreateToggle({
+        Name = "FPS/Ping Watermark", Flag = "S_Watermark",
+        Default = false,
+        Callback = function(s)
+            Library.WatermarkEnabled = s
+            Library.Watermark.Visible = s and Library.Visible
+        end,
+    })
+    intMod:CreateToggle({
+        Name = "ArrayList", Flag = "S_ArrList",
+        Default = false,
+        Callback = function(s)
+            Library.ArrayListEnabled = s
+            Library.ArrayList.Visible = s and Library.Visible
+        end,
+    })
+    intMod:CreateToggle({
+        Name = "Auto Save", Flag = "S_AutoSave",
+        Default = false,
+        Callback = function(s) Library.AutoSave = s; if s then ConfigManager:Save() end end,
+    })
+
+    -- System
+    local sysMod = settings:CreateModule({
+        Name = "System", Flag = "S_System", Default = true,
         Callback = function() end,
     })
-    systemModule.Expanded = true
 
-    -- Destroy UI Button
-    systemModule:CreateButton({
+    sysMod:CreateButton({
         Name = "⚠ Destroy UI",
         Callback = function()
-            Library:Destroy()
+            Library:Notify({ Title = "Goodbye!", Content = "UI destroyed.", Duration = 2, Type = "warn" })
+            task.delay(1, function() Library:Destroy() end)
         end,
     })
-
-    -- Save Config Button
-    systemModule:CreateButton({
+    sysMod:CreateButton({
         Name = "💾 Save Config",
         Callback = function()
             ConfigManager:Save()
+            Library:Notify({ Title = "Saved", Content = "Config saved to file.", Duration = 2, Type = "success" })
         end,
     })
-
-    -- Load Config Button
-    systemModule:CreateButton({
+    sysMod:CreateButton({
         Name = "📂 Load Config",
         Callback = function()
             ConfigManager:Load()
+            Library:Notify({ Title = "Loaded", Content = "Config loaded.", Duration = 2, Type = "info" })
         end,
     })
 
-    -- Runtime Label
-    local runtimeLabel = systemModule:CreateLabel({
-        Name = "Runtime: 00:00:00",
-    })
-
-    -- Runtime update loop
+    local rtLabel = sysMod:CreateLabel({ Name = "Runtime: 00:00:00" })
     local rtCo = task.spawn(function()
         while AccentEngine.Running do
-            pcall(function()
-                local elapsed = os.clock() - Library.StartTime
-                runtimeLabel:SetText("Runtime: " .. Utility.FormatTime(elapsed))
-            end)
+            pcall(function() rtLabel:SetText("Runtime: " .. Utility.FormatTime(os.clock() - Library.StartTime)) end)
             task.wait(1)
         end
     end)
     table.insert(Library.Coroutines, rtCo)
-
-    task.defer(function() systemModule._UpdateElementSize() end)
-
-    -- Final size updates
-    task.defer(function()
-        task.wait(0.1)
-        settingsCat._UpdateSize()
-    end)
 end
 
 -- ============================================================
--- RETURN
+-- DESTROY
 -- ============================================================
+function Library:Destroy()
+    AccentEngine:Stop()
+    for _, c in ipairs(Library.Connections) do pcall(function() c:Disconnect() end) end
+    Library.Connections = {}
+    Library.AccentObjects = {}
+    Library.AccentGradients = {}
+    Library.Categories = {}
+    Library.Flags = {}
+    pcall(function() Library.ScreenGui:Destroy() end)
+    Library.Initialized = false
+end
+
 return Library
