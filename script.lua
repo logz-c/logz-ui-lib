@@ -1,26 +1,46 @@
 --[[
     LogQuick_UI_Lib.lua
-    Roblox 执行脚本通用高级单文件 UI 框架库
+    ================================================================================
+    Roblox 执行脚本通用高级单文件 UI 框架库 (Redesigned & Rebuilt Version)
     
     作者: Log_quick (不可更改)
-    支持平台: 手机端 (触屏自动响应适配) / 电脑端 (固定标准高清比例)
-    视觉风格: 极简流线美观大方、玻璃感高对比度、高级开屏载入动画、清脆全音效系统
+    支持平台: 手机端 (触屏与小屏自适应) / 电脑端 (精细高分辨标准布局)
+    视觉风格: 现代流线极简玻璃风格、炫彩发光边框、高级开屏 Splash 载入动画、全清脆音效
     
-    接口特性:
-    - 手机端/电脑端自适应
-    - 内置 UI 设置面板 (外观、透明度、边框渐变/彩虹/呼吸动画、主题色+HSV盘、缩放、背景、音效、作者、配置存取)
-    - 功能分区 (Tab) 与 功能再分区 (SubSection/Nested Partition)
-    - 完整基础及高级组件: 滑块, 按钮, 开关, HSV色盘, 下拉列表, 输入框, 按键绑定, 文本标签, 玩家选择器, 图片/图标, 状态指示器
-    - 扩展系统: 动态关键字搜索过滤, 卡密密钥系统, 水印悬浮条, FPS/Ping 悬浮状态窗 (默认开启/可关闭)
-    - 自动识别注入器名称 (identifyexecutor) 与 启动清脆音效欢迎通知
-    - 窗口拖拽记忆与屏幕安全边界限制 (防止超出屏幕拖不回来)
+    核心接口与系统:
+    - [1] 设备端响应适配: 手机端自动扩展点击域与横/纵自适应布局，电脑端保持 560x440 精致比例
+    - [2] 内置 UI 设置面板: 包含配置存取 (Config)、透明度、边框动画 (彩虹/呼吸/脉冲)、主题 (暗/亮/赛博/翡翠/落日/深夜/HSV盘)、背景图片与透明度、音效自定义、版权与脚本作者
+    - [3] 完整控件与系统 API:
+          • 滑块 (Slider)
+          • 按钮 (Button)
+          • 开关 (Toggle)
+          • HSV 色盘 (ColorPicker)
+          • UI 设置面板 (BuildSettingsTab)
+          • 标题/副标题设置 (SetTitle / SetSubtitle)
+          • 功能分区 (Tab -> Section) 与 功能再分区 (SubSection)
+          • 通知系统 (Notify) - 自动打招呼并动态显示 identifyexecutor 注入器名称与音效
+          • 下拉菜单 (Dropdown)
+          • 数值/文本调配 (Input)
+          • 按键绑定 (Keybind)
+          • 标签文本 (Label)
+          • 关键字模糊搜索 (CreateSearch)
+          • 玩家选择器 (PlayerSelector) - 动态监听玩家进出
+          • 密钥验证系统 (CreateKeySystem) - 弹出式 Modal 验证与剪贴板支持
+          • 图片图标展示 (Image)
+          • 运行状态显示器 (Status)
+          • 自定义背景 API (SetBackground)
+          • FPS & Ping 悬浮窗 (ToggleStats) - 默认开启，可随时开关
+          • 悬浮水印挂件 (SetWatermark / HideWatermark)
+    - [4] 记忆拖拽位置与安全屏幕边缘 Clamp 限制 (防脱拽丢失)
+    - [5] 固定标注 UI 作者 Log_quick (不可更改)，并提供 API 设置脚本作者名称显示在侧
+    ================================================================================
 ]]
 
 local LogQuickUI = {}
 local Library = LogQuickUI
 
 -- ============================================================
--- [1] Roblox 服务与环境兼容层
+-- [1] Services & Compatibility Layer
 -- ============================================================
 local Players = game:GetService("Players")
 local UserInputService = game:GetService("UserInputService")
@@ -34,19 +54,19 @@ local CoreGui = game:GetService("CoreGui")
 local LocalPlayer = Players.LocalPlayer
 local PlayerGui = LocalPlayer and LocalPlayer:WaitForChild("PlayerGui", 10)
 
--- UI 挂载点安全获取 (优先 gethui 防止游戏 Anti-Cheat 扫描 PlayerGui)
-local ParentGui = nil
+-- 挂载节点获取 (gethui > RobloxGui > CoreGui > PlayerGui)
+local TargetParent = nil
 if gethui then
-    ParentGui = gethui()
+    TargetParent = gethui()
 elseif CoreGui and CoreGui:FindFirstChild("RobloxGui") then
-    ParentGui = CoreGui.RobloxGui
+    TargetParent = CoreGui.RobloxGui
 elseif CoreGui then
-    ParentGui = CoreGui
+    TargetParent = CoreGui
 else
-    ParentGui = PlayerGui
+    TargetParent = PlayerGui
 end
 
--- 智能识别注入器/执行器名称
+-- 智能检测注入器环境
 local function GetExecutorName()
     if identifyexecutor then
         local name, version = identifyexecutor()
@@ -63,31 +83,28 @@ local function GetExecutorName()
     elseif Hydrogen then return "Hydrogen"
     elseif Codex then return "Codex"
     end
-    return "通用执行器 (Executor)"
+    return "通用注入器 (Executor)"
 end
 
--- 设备类型判定与自适应参数
+-- 设备检测与适配参数
 local IsMobile = UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled
 if not IsMobile and UserInputService.TouchEnabled then
-    -- 兼容部分带触屏的笔记本
     IsMobile = true
 end
 
--- UI 基础度量尺寸 (手机端自适应放大，电脑端保持标准)
-local ScaleFactor = IsMobile and 1.15 or 1.0
+local ItemHeight = IsMobile and 42 or 34
 local FontBaseSize = IsMobile and 15 or 13
 local HeaderFontSize = IsMobile and 17 or 15
-local ItemHeight = IsMobile and 42 or 34
 
 -- ============================================================
--- [2] 色彩主题与动态样式
+-- [2] Theme Palette Manager
 -- ============================================================
 local Themes = {
     Dark = {
         Background = Color3.fromRGB(18, 18, 24),
-        BackgroundSecondary = Color3.fromRGB(25, 25, 34),
-        Surface = Color3.fromRGB(32, 32, 44),
-        SurfaceLight = Color3.fromRGB(45, 45, 62),
+        BackgroundSecondary = Color3.fromRGB(26, 26, 36),
+        Surface = Color3.fromRGB(34, 34, 46),
+        SurfaceLight = Color3.fromRGB(48, 48, 64),
         Text = Color3.fromRGB(245, 245, 250),
         TextMuted = Color3.fromRGB(160, 160, 185),
         Accent = Color3.fromRGB(130, 100, 255),
@@ -172,25 +189,24 @@ local Themes = {
 local ThemeColors = Themes.Dark
 
 -- ============================================================
--- [3] 配置持久化与状态存储 (JSON 文件 / getgenv 内存)
+-- [3] Config State & JSON Storage
 -- ============================================================
-local ConfigKey = "LogQuickUI_Config.json"
 local ConfigFolder = "LogQuickStorage"
+local ConfigFile = ConfigFolder .. "/LogQuickUI_Config.json"
 
 local Saved = {
     WindowPosition = UDim2.new(0.5, -280, 0.5, -220),
     WindowSize = UDim2.new(0, 560, 0, 440),
-    Transparency = 1, -- 透明度 (0-1)
+    Transparency = 1.0,
     BorderColorMode = "Pulse", -- Static, Rainbow, Breathing, Pulse
     BorderColorHSV = { H = 0.72, S = 0.65, V = 1.0 },
     ThemeName = "Dark",
     SizeScale = 1.0,
-    BackgroundImage = nil,
-    BackgroundColor = Color3.fromRGB(18, 18, 24),
-    BackgroundTransparency = 0,
+    BackgroundImage = "",
+    BackgroundTransparency = 0.3,
     SoundEnabled = true,
     SoundVolume = 0.5,
-    SoundId = "rbxassetid://9115297988", -- 清脆点击音效
+    SoundId = "rbxassetid://9115297988",
     FloatingStatusEnabled = true,
     ScriptAuthor = "开发者",
     ConfigData = {},
@@ -211,6 +227,7 @@ local function SaveConfig()
                 ThemeName = Saved.ThemeName,
                 SizeScale = Saved.SizeScale,
                 BackgroundImage = Saved.BackgroundImage,
+                BackgroundTransparency = Saved.BackgroundTransparency,
                 SoundEnabled = Saved.SoundEnabled,
                 SoundVolume = Saved.SoundVolume,
                 SoundId = Saved.SoundId,
@@ -218,17 +235,16 @@ local function SaveConfig()
                 ScriptAuthor = Saved.ScriptAuthor,
                 ConfigData = Saved.ConfigData,
             }
-            writefile(ConfigFolder .. "/" .. ConfigKey, HttpService:JSONEncode(saveTable))
+            writefile(ConfigFile, HttpService:JSONEncode(saveTable))
         end)
     end
 end
 
 local function LoadConfig()
     if readfile and HttpService then
-        local filePath = ConfigFolder .. "/" .. ConfigKey
         pcall(function()
-            if isfile and isfile(filePath) then
-                local raw = readfile(filePath)
+            if isfile and isfile(ConfigFile) then
+                local raw = readfile(ConfigFile)
                 local decoded = HttpService:JSONDecode(raw)
                 if decoded then
                     if decoded.WindowPosition then
@@ -243,12 +259,13 @@ local function LoadConfig()
                     if decoded.ThemeName ~= nil then Saved.ThemeName = decoded.ThemeName end
                     if decoded.SizeScale ~= nil then Saved.SizeScale = decoded.SizeScale end
                     if decoded.BackgroundImage ~= nil then Saved.BackgroundImage = decoded.BackgroundImage end
+                    if decoded.BackgroundTransparency ~= nil then Saved.BackgroundTransparency = decoded.BackgroundTransparency end
                     if decoded.SoundEnabled ~= nil then Saved.SoundEnabled = decoded.SoundEnabled end
                     if decoded.SoundVolume ~= nil then Saved.SoundVolume = decoded.SoundVolume end
                     if decoded.SoundId ~= nil then Saved.SoundId = decoded.SoundId end
-                    if decoded.FloatingStatusEnabled ~= nil then Saved.FloatingStatusEnabled = Saved.FloatingStatusEnabled end
-                    if decoded.ScriptAuthor ~= nil then Saved.ScriptAuthor = Saved.ScriptAuthor end
-                    if decoded.ConfigData ~= nil then Saved.ConfigData = Saved.ConfigData end
+                    if decoded.FloatingStatusEnabled ~= nil then Saved.FloatingStatusEnabled = decoded.FloatingStatusEnabled end
+                    if decoded.ScriptAuthor ~= nil then Saved.ScriptAuthor = decoded.ScriptAuthor end
+                    if decoded.ConfigData ~= nil then Saved.ConfigData = decoded.ConfigData end
                 end
             end
         end)
@@ -257,7 +274,7 @@ end
 
 LoadConfig()
 
--- 限制窗口在屏幕范围内 (防超出脱拽丢失)
+-- 限制窗口不要超出屏幕边界 (Clamp Boundary)
 local function ClampWindowPosition(pos, winSize)
     local viewport = workspace.CurrentCamera and workspace.CurrentCamera.ViewportSize or Vector2.new(1280, 720)
     local sizeX = winSize.X.Offset
@@ -278,7 +295,7 @@ local function ClampWindowPosition(pos, winSize)
 end
 
 -- ============================================================
--- [4] 音效播放模块
+-- [4] Crisp Sound System
 -- ============================================================
 local Sounds = {
     Click = "rbxassetid://9115297988",
@@ -296,15 +313,11 @@ local function PlaySound(soundId)
             local sound = Instance.new("Sound")
             sound.SoundId = id
             sound.Volume = Saved.SoundVolume or 0.5
-            sound.PlaybackSpeed = 1.05 + math.random() * 0.1
+            sound.PlaybackSpeed = 1.05 + math.random() * 0.08
             sound.Parent = SoundService
             sound:Play()
-            sound.Ended:Connect(function()
-                sound:Destroy()
-            end)
-            task.delay(3, function()
-                if sound and sound.Parent then sound:Destroy() end
-            end)
+            sound.Ended:Connect(function() sound:Destroy() end)
+            task.delay(3, function() if sound and sound.Parent then sound:Destroy() end end)
         end)
     end)
 end
@@ -315,7 +328,7 @@ Library.SetSoundVolume = function(vol) Saved.SoundVolume = vol; SaveConfig() end
 Library.SetSoundId = function(id) Saved.SoundId = id; SaveConfig() end
 
 -- ============================================================
--- [5] HSV / RGB 色彩转换与动画效果
+-- [5] HSV Math & Dynamic Border Color Animation
 -- ============================================================
 local function HSVToRGB(h, s, v)
     local c = v * s
@@ -368,7 +381,7 @@ local function GetCurrentBorderColor()
 end
 
 -- ============================================================
--- [6] 辅助组件构造函数 (控件基础设施)
+-- [6] Base UI Helpers
 -- ============================================================
 local function CreateCorner(parent, radius)
     local c = Instance.new("UICorner")
@@ -417,7 +430,7 @@ local function MakeLabel(parent, props)
 end
 
 -- ============================================================
--- [7] 主窗口构造与导航栏
+-- [7] Window Constructor & Navigation
 -- ============================================================
 local MainWindow = nil
 local RootScreenGui = nil
@@ -426,7 +439,6 @@ local BackgroundImageLabel = nil
 local SearchInputBox = nil
 local CurrentTabObj = nil
 local TabsList = {}
-local UIThemeUpdaters = {}
 
 function Library:CreateWindow(opts)
     opts = opts or {}
@@ -435,9 +447,7 @@ function Library:CreateWindow(opts)
     local windowSize = opts.Size or Saved.WindowSize
     local windowPos = opts.Position or Saved.WindowPosition
 
-    if opts.ScriptAuthor then
-        Saved.ScriptAuthor = opts.ScriptAuthor
-    end
+    if opts.ScriptAuthor then Saved.ScriptAuthor = opts.ScriptAuthor end
 
     -- 创建 ScreenGui
     local screenGui = Instance.new("ScreenGui")
@@ -445,10 +455,10 @@ function Library:CreateWindow(opts)
     screenGui.ResetOnSpawn = false
     screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
     screenGui.IgnoreGuiInset = true
-    screenGui.Parent = ParentGui
+    screenGui.Parent = TargetParent
     RootScreenGui = screenGui
 
-    -- [高级载入动画 Splash Loader]
+    -- [Splash Loader 载入动画]
     local splashFrame = Instance.new("Frame")
     splashFrame.Name = "SplashLoader"
     splashFrame.Size = UDim2.new(0, 320, 0, 180)
@@ -458,9 +468,9 @@ function Library:CreateWindow(opts)
     splashFrame.ZIndex = 1000
     splashFrame.Parent = screenGui
     CreateCorner(splashFrame, 14)
-    local splashStroke = CreateStroke(splashFrame, ThemeColors.Accent, 2)
+    CreateStroke(splashFrame, ThemeColors.Accent, 2)
 
-    local splashTitle = MakeLabel(splashFrame, {
+    MakeLabel(splashFrame, {
         Size = UDim2.new(1, -30, 0, 28),
         Position = UDim2.new(0, 15, 0, 25),
         Text = titleText,
@@ -469,10 +479,10 @@ function Library:CreateWindow(opts)
         TextXAlignment = Enum.TextXAlignment.Center,
     })
 
-    local splashSub = MakeLabel(splashFrame, {
+    MakeLabel(splashFrame, {
         Size = UDim2.new(1, -30, 0, 20),
         Position = UDim2.new(0, 15, 0, 55),
-        Text = "正在载入引擎与组件库...",
+        Text = "正在载入 UI 引擎与依赖模块...",
         TextColor3 = ThemeColors.TextMuted,
         TextSize = FontBaseSize - 1,
         TextXAlignment = Enum.TextXAlignment.Center,
@@ -496,11 +506,11 @@ function Library:CreateWindow(opts)
     CreateCorner(progressBarFill, 4)
 
     PlaySound(Sounds.Chime)
-    TweenService:Create(progressBarFill, TweenInfo.new(0.8, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), {
+    TweenService:Create(progressBarFill, TweenInfo.new(0.85, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), {
         Size = UDim2.new(1, 0, 1, 0)
     }):Play()
 
-    task.wait(0.85)
+    task.wait(0.88)
 
     -- 主窗口框架
     local win = Instance.new("Frame")
@@ -516,7 +526,7 @@ function Library:CreateWindow(opts)
     CreateCorner(win, 12)
     local winStroke = CreateStroke(win, GetCurrentBorderColor(), 2)
 
-    -- 自定义背景图层
+    -- 背景图层
     local bgImg = Instance.new("ImageLabel")
     bgImg.Name = "CustomBackground"
     bgImg.Size = UDim2.new(1, 0, 1, 0)
@@ -538,7 +548,7 @@ function Library:CreateWindow(opts)
     header.Parent = win
     CreateCorner(header, 12)
 
-    local headerTitle = MakeLabel(header, {
+    local headerTitleLbl = MakeLabel(header, {
         Name = "HeaderTitle",
         Size = UDim2.new(0.6, -10, 0, 22),
         Position = UDim2.new(0, 14, 0, 4),
@@ -547,7 +557,7 @@ function Library:CreateWindow(opts)
         TextSize = HeaderFontSize,
     })
 
-    local headerSub = MakeLabel(header, {
+    local headerSubLbl = MakeLabel(header, {
         Name = "HeaderSub",
         Size = UDim2.new(0.6, -10, 0, 16),
         Position = UDim2.new(0, 14, 0, 24),
@@ -613,7 +623,7 @@ function Library:CreateWindow(opts)
         end
     end)
 
-    -- 拖拽移动与屏幕限制
+    -- 拖拽与安全边界 Clamp
     local dragging = false
     local dragStart, startPos
     header.InputBegan:Connect(function(input)
@@ -643,7 +653,7 @@ function Library:CreateWindow(opts)
         end
     end)
 
-    -- 窗口主主体 (TabBar + PagesContainer)
+    -- 窗口主体 (TabBar + Pages)
     local bodyFrame = Instance.new("Frame")
     bodyFrame.Name = "Body"
     bodyFrame.Size = UDim2.new(1, -16, 1, -56)
@@ -652,7 +662,7 @@ function Library:CreateWindow(opts)
     bodyFrame.ZIndex = 15
     bodyFrame.Parent = win
 
-    -- 侧边/顶部 标签导航栏 (ScrollingFrame 适配多 Tab)
+    -- 标签栏 TabBar (手机端顶部/电脑端侧边)
     local tabBar = Instance.new("ScrollingFrame")
     tabBar.Name = "TabBar"
     tabBar.Size = IsMobile and UDim2.new(1, 0, 0, 36) or UDim2.new(0, 130, 1, 0)
@@ -681,7 +691,7 @@ function Library:CreateWindow(opts)
         end
     end)
 
-    -- 标签视图容器 Pages
+    -- 内容容器 PagesContainer
     local pagesContainer = Instance.new("Frame")
     pagesContainer.Name = "PagesContainer"
     pagesContainer.Size = IsMobile and UDim2.new(1, 0, 1, -42) or UDim2.new(1, -138, 1, 0)
@@ -693,7 +703,7 @@ function Library:CreateWindow(opts)
     MainWindow = win
     MainFrame = win
 
-    -- 渐变销毁 Splash 加载面板，呈现主窗口
+    -- 销毁 Splash 展现主窗口
     splashFrame:Destroy()
     win.Size = UDim2.new(0, windowSize.X.Offset, 0, 0)
     win.Position = UDim2.new(windowPos.X.Scale, windowPos.X.Offset, windowPos.Y.Scale, windowPos.Y.Offset + 30)
@@ -702,7 +712,7 @@ function Library:CreateWindow(opts)
         Position = windowPos,
     }):Play()
 
-    -- 持续边框颜色更新服务
+    -- 持续动态发光边框更新
     task.spawn(function()
         while screenGui and screenGui.Parent do
             task.wait(0.02)
@@ -712,18 +722,28 @@ function Library:CreateWindow(opts)
         end
     end)
 
-    -- 销毁清除注册
     screenGui.AncestryChanged:Connect(function()
-        if not screenGui.Parent then
-            MainWindow = nil
-        end
+        if not screenGui.Parent then MainWindow = nil end
     end)
 
     return win
 end
 
+-- API: 动态修改标题与副标题
+function Library:SetTitle(title, subtitle)
+    if MainWindow then
+        local header = MainWindow:FindFirstChild("Header", true)
+        if header then
+            local tLbl = header:FindFirstChild("HeaderTitle")
+            local sLbl = header:FindFirstChild("HeaderSub")
+            if tLbl and title then tLbl.Text = title end
+            if sLbl and subtitle then sLbl.Text = subtitle end
+        end
+    end
+end
+
 -- ============================================================
--- [8] 标签 (Tab)、分区 (Section) 与 再分区 (SubSection)
+-- [8] Component Attach System (Tabs, Sections, SubSections)
 -- ============================================================
 function Library:AddTab(opts)
     opts = opts or {}
@@ -799,17 +819,15 @@ function Library:AddTab(opts)
 
     tabBtn.MouseButton1Click:Connect(ActivateTab)
 
-    if #TabsList == 0 then
-        ActivateTab()
-    end
+    if #TabsList == 0 then ActivateTab() end
 
     table.insert(TabsList, tabObj)
 
-    -- 封装构建 UI 组件的核心函数 (通用 attach 到 Parent)
+    -- 通用控件附加器
     local function AttachComponents(containerFrame)
         local compAPI = {}
 
-        -- [1] 按钮 Button
+        -- 按钮 Button
         function compAPI:AddButton(p)
             p = p or {}
             local btnFrame = Instance.new("TextButton")
@@ -839,7 +857,7 @@ function Library:AddTab(opts)
             return btnFrame
         end
 
-        -- [2] 开关 Toggle
+        -- 开关 Toggle
         function compAPI:AddToggle(p)
             p = p or {}
             local state = p.Default == true
@@ -893,14 +911,12 @@ function Library:AddTab(opts)
                 if p.Callback then pcall(p.Callback, state) end
             end
 
-            switchBg.MouseButton1Click:Connect(function()
-                UpdateSwitch(not state)
-            end)
+            switchBg.MouseButton1Click:Connect(function() UpdateSwitch(not state) end)
 
             return toggleFrame, state, function(nState) UpdateSwitch(nState) end
         end
 
-        -- [3] 滑块 Slider
+        -- 滑块 Slider
         function compAPI:AddSlider(p)
             p = p or {}
             local minVal = p.Min or 0
@@ -1003,7 +1019,7 @@ function Library:AddTab(opts)
             return sliderFrame
         end
 
-        -- [4] HSV 颜色选择器 ColorPicker
+        -- HSV 色盘 ColorPicker
         function compAPI:AddHSVPicker(p)
             p = p or {}
             local curColor = p.Default or Color3.fromRGB(255, 0, 0)
@@ -1037,7 +1053,6 @@ function Library:AddTab(opts)
             previewBtn.Parent = pickerFrame
             CreateCorner(previewBtn, 6)
 
-            -- 展开面板 (Canvas + Value Slider)
             local expandPanel = Instance.new("Frame")
             expandPanel.Name = "ExpandPanel"
             expandPanel.Size = UDim2.new(1, -20, 0, 110)
@@ -1046,14 +1061,13 @@ function Library:AddTab(opts)
             expandPanel.ZIndex = 22
             expandPanel.Parent = pickerFrame
 
-            -- 2D 色相/饱和度 画布
             local canvas = Instance.new("ImageLabel")
             canvas.Name = "Canvas"
             canvas.Size = UDim2.new(0, 110, 0, 100)
             canvas.Position = UDim2.new(0, 0, 0, 0)
             canvas.BackgroundColor3 = Color3.fromRGB(255, 0, 0)
             canvas.BorderSizePixel = 0
-            canvas.Image = "rbxassetid://4155801252" -- 官方 2D HSV 拾色图谱
+            canvas.Image = "rbxassetid://4155801252"
             canvas.ZIndex = 23
             canvas.Parent = expandPanel
             CreateCorner(canvas, 6)
@@ -1068,7 +1082,6 @@ function Library:AddTab(opts)
             cursor.Parent = canvas
             CreateCorner(cursor, 5)
 
-            -- 1D 亮度条 (Value Bar)
             local valBar = Instance.new("ImageLabel")
             valBar.Name = "ValBar"
             valBar.Size = UDim2.new(1, -125, 0, 20)
@@ -1082,15 +1095,6 @@ function Library:AddTab(opts)
             local valGradient = Instance.new("UIGradient")
             valGradient.Color = ColorSequence.new(Color3.fromRGB(0, 0, 0), Color3.fromRGB(255, 255, 255))
             valGradient.Parent = valBar
-
-            local valCursor = Instance.new("Frame")
-            valCursor.Size = UDim2.new(0, 6, 1, 4)
-            valCursor.Position = UDim2.new(curV, -3, 0, -2)
-            valCursor.BackgroundColor3 = ThemeColors.Accent
-            valCursor.BorderSizePixel = 0
-            valCursor.ZIndex = 24
-            valCursor.Parent = valBar
-            CreateCorner(valCursor, 3)
 
             local isExpanded = false
             previewBtn.MouseButton1Click:Connect(function()
@@ -1109,7 +1113,6 @@ function Library:AddTab(opts)
                 if p.Callback then pcall(p.Callback, curColor, curH, curS, curV) end
             end
 
-            -- 画布拖拽交互
             local draggingCanvas = false
             canvas.InputBegan:Connect(function(i)
                 if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
@@ -1143,7 +1146,7 @@ function Library:AddTab(opts)
             return pickerFrame
         end
 
-        -- [5] 下拉菜单 Dropdown
+        -- 下拉菜单 Dropdown
         function compAPI:AddDropdown(p)
             p = p or {}
             local itemsList = p.Values or {"选项一", "选项二"}
@@ -1245,17 +1248,17 @@ function Library:AddTab(opts)
                 end
             end)
 
-            local api = {
+            local dropAPI = {
                 SetValues = function(self, nValues)
                     itemsList = nValues or {}
                     PopulateList(itemsList)
                 end
             }
 
-            return dropFrame, api
+            return dropFrame, dropAPI
         end
 
-        -- [6] 输入框 Input (数值/文本调配)
+        -- 功能数值调配 Input
         function compAPI:AddInput(p)
             p = p or {}
             local inputFrame = Instance.new("Frame")
@@ -1270,7 +1273,7 @@ function Library:AddTab(opts)
             local titleLbl = MakeLabel(inputFrame, {
                 Size = UDim2.new(0.5, 0, 0, ItemHeight),
                 Position = UDim2.new(0, 10, 0, 0),
-                Text = p.Text or "参数输入",
+                Text = p.Text or "数值/内容输入",
             })
 
             local box = Instance.new("TextBox")
@@ -1298,7 +1301,7 @@ function Library:AddTab(opts)
             return inputFrame
         end
 
-        -- [7] 按键绑定 Keybind
+        -- 按键绑定 Keybind
         function compAPI:AddKeybind(p)
             p = p or {}
             local currentKey = p.Default or Enum.KeyCode.E
@@ -1312,7 +1315,7 @@ function Library:AddTab(opts)
             kbFrame.Parent = containerFrame
             CreateCorner(kbFrame, 6)
 
-            local titleLbl = MakeLabel(kbFrame, {
+            MakeLabel(kbFrame, {
                 Size = UDim2.new(0.6, 0, 0, ItemHeight),
                 Position = UDim2.new(0, 10, 0, 0),
                 Text = p.Text or "按键绑定",
@@ -1333,17 +1336,14 @@ function Library:AddTab(opts)
             bindBtn.Parent = kbFrame
             CreateCorner(bindBtn, 6)
 
-            local listening = false
             bindBtn.MouseButton1Click:Connect(function()
                 PlaySound(Sounds.Click)
-                listening = true
                 bindBtn.Text = "请按任意键..."
                 bindBtn.TextColor3 = ThemeColors.Warning
 
                 local conn
                 conn = UserInputService.InputBegan:Connect(function(input)
                     if input.UserInputType == Enum.UserInputType.Keyboard then
-                        listening = false
                         currentKey = input.KeyCode
                         bindBtn.Text = currentKey.Name
                         bindBtn.TextColor3 = ThemeColors.Accent
@@ -1356,7 +1356,7 @@ function Library:AddTab(opts)
             return kbFrame
         end
 
-        -- [8] 标签文本 Label
+        -- 标签文本 Label
         function compAPI:AddLabel(p)
             p = p or {}
             local lblFrame = Instance.new("Frame")
@@ -1369,7 +1369,7 @@ function Library:AddTab(opts)
             lblFrame.Parent = containerFrame
             CreateCorner(lblFrame, 6)
 
-            local mainLbl = MakeLabel(lblFrame, {
+            MakeLabel(lblFrame, {
                 Size = UDim2.new(1, -20, 0, 22),
                 Position = UDim2.new(0, 10, 0, 4),
                 Text = p.Text or "提示文本",
@@ -1377,7 +1377,7 @@ function Library:AddTab(opts)
             })
 
             if p.SubText then
-                local subLbl = MakeLabel(lblFrame, {
+                MakeLabel(lblFrame, {
                     Size = UDim2.new(1, -20, 0, 18),
                     Position = UDim2.new(0, 10, 0, 24),
                     Text = p.SubText,
@@ -1389,7 +1389,7 @@ function Library:AddTab(opts)
             return lblFrame
         end
 
-        -- [9] 玩家选择器 PlayerSelector
+        -- 动态玩家选择器 PlayerSelector
         function compAPI:AddPlayerSelector(p)
             p = p or {}
             local function GetPlayerNames()
@@ -1417,7 +1417,7 @@ function Library:AddTab(opts)
             return dropFrame
         end
 
-        -- [10] 图片图标显示 Image
+        -- 图片图标展示 Image
         function compAPI:AddImage(p)
             p = p or {}
             local imgFrame = Instance.new("Frame")
@@ -1439,7 +1439,7 @@ function Library:AddTab(opts)
             imgLabel.Parent = imgFrame
 
             if p.Text then
-                local descLbl = MakeLabel(imgFrame, {
+                MakeLabel(imgFrame, {
                     Size = UDim2.new(1, -((p.Height or 100) + 16), 1, -16),
                     Position = UDim2.new(0, (p.Height or 100) + 8, 0, 8),
                     Text = p.Text,
@@ -1450,7 +1450,7 @@ function Library:AddTab(opts)
             return imgFrame
         end
 
-        -- [11] 状态显示器 Status
+        -- 运行状态显示器 Status
         function compAPI:AddStatus(p)
             p = p or {}
             local statusFrame = Instance.new("Frame")
@@ -1470,7 +1470,7 @@ function Library:AddTab(opts)
             dot.Parent = statusFrame
             CreateCorner(dot, 5)
 
-            local statusLbl = MakeLabel(statusFrame, {
+            MakeLabel(statusFrame, {
                 Size = UDim2.new(1, -32, 1, 0),
                 Position = UDim2.new(0, 30, 0, 0),
                 Text = p.Text or "运行状态: 正常",
@@ -1483,13 +1483,11 @@ function Library:AddTab(opts)
         return compAPI
     end
 
-    -- 给 Tab 绑定直接组件接口
+    -- 给 Tab 直接绑定组件接口
     local tabCompAPI = AttachComponents(page)
-    for k, v in pairs(tabCompAPI) do
-        tabObj[k] = v
-    end
+    for k, v in pairs(tabCompAPI) do tabObj[k] = v end
 
-    -- [分区 Section] 添加接口
+    -- [分区 Section] 接口
     function tabObj:AddSection(sOpts)
         sOpts = sOpts or {}
         local secName = sOpts.Name or ("Section_" .. tostring(#self.Sections + 1))
@@ -1513,7 +1511,7 @@ function Library:AddTab(opts)
         secHeader.Parent = secFrame
         CreateCorner(secHeader, 8)
 
-        local headerTitle = MakeLabel(secHeader, {
+        MakeLabel(secHeader, {
             Size = UDim2.new(1, -12, 1, 0),
             Position = UDim2.new(0, 10, 0, 0),
             Text = secTitle,
@@ -1546,13 +1544,10 @@ function Library:AddTab(opts)
             SubSections = {},
         }
 
-        -- 组件附加到 Section Body
         local secCompAPI = AttachComponents(secBody)
-        for k, v in pairs(secCompAPI) do
-            secObj[k] = v
-        end
+        for k, v in pairs(secCompAPI) do secObj[k] = v end
 
-        -- [再分区 SubSection] 嵌套结构
+        -- [再分区 SubSection] 嵌套接口
         function secObj:AddSubSection(ssOpts)
             ssOpts = ssOpts or {}
             local subTitle = ssOpts.Title or "子分区"
@@ -1566,7 +1561,7 @@ function Library:AddTab(opts)
             subSecFrame.Parent = self.Body
             CreateCorner(subSecFrame, 6)
 
-            local subHeader = MakeLabel(subSecFrame, {
+            MakeLabel(subSecFrame, {
                 Size = UDim2.new(1, -10, 0, 24),
                 Position = UDim2.new(0, 8, 0, 2),
                 Text = "▶ " .. subTitle,
@@ -1599,9 +1594,7 @@ function Library:AddTab(opts)
             }
 
             local subCompAPI = AttachComponents(subBody)
-            for k, v in pairs(subCompAPI) do
-                subObj[k] = v
-            end
+            for k, v in pairs(subCompAPI) do subObj[k] = v end
 
             table.insert(self.SubSections, subObj)
             return subObj
@@ -1615,7 +1608,7 @@ function Library:AddTab(opts)
 end
 
 -- ============================================================
--- [9] 通知系统 Notification System
+-- [9] Notification System
 -- ============================================================
 local ActiveNotifications = {}
 
@@ -1635,11 +1628,11 @@ function Library:Notify(opts)
     notifFrame.BackgroundColor3 = ThemeColors.Surface
     notifFrame.BorderSizePixel = 0
     notifFrame.ZIndex = 5000
-    notifFrame.Parent = RootScreenGui or ParentGui
+    notifFrame.Parent = RootScreenGui or TargetParent
     CreateCorner(notifFrame, 10)
-    local notifStroke = CreateStroke(notifFrame, ThemeColors.Accent, 1.5)
+    CreateStroke(notifFrame, ThemeColors.Accent, 1.5)
 
-    local titleLbl = MakeLabel(notifFrame, {
+    MakeLabel(notifFrame, {
         Size = UDim2.new(1, -20, 0, 20),
         Position = UDim2.new(0, 10, 0, 6),
         Text = titleText,
@@ -1647,7 +1640,7 @@ function Library:Notify(opts)
         TextColor3 = ThemeColors.Text,
     })
 
-    local msgLbl = MakeLabel(notifFrame, {
+    MakeLabel(notifFrame, {
         Size = UDim2.new(1, -20, 0, 22),
         Position = UDim2.new(0, 10, 0, 26),
         Text = msgText,
@@ -1657,7 +1650,6 @@ function Library:Notify(opts)
 
     table.insert(ActiveNotifications, notifFrame)
 
-    -- 入场动画
     TweenService:Create(notifFrame, TweenInfo.new(0.35, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
         Position = UDim2.new(1, -270, 1, -80 - ((#ActiveNotifications - 1) * 66))
     }):Play()
@@ -1681,12 +1673,12 @@ function Library:Notify(opts)
 end
 
 -- ============================================================
--- [10] 内置 UI 设置面板 (开发者可继续添加功能)
+-- [10] Built-in UI Settings Panel
 -- ============================================================
 function Library:BuildSettingsTab()
     local setTab = Library:AddTab({ Name = "UISettings", Title = "UI 设置" })
 
-    -- 外观与边框设置 (分区)
+    -- 外观样式与动画 (分区)
     local styleSec = setTab:AddSection({ Title = "外观样式与动画" })
 
     styleSec:AddSlider({
@@ -1695,12 +1687,9 @@ function Library:BuildSettingsTab()
         Max = 1.0,
         Default = Saved.Transparency,
         Rounding = 0.05,
-        Unit = "",
         Callback = function(v)
             Saved.Transparency = v
-            if MainWindow then
-                MainWindow.BackgroundTransparency = 1 - v
-            end
+            if MainWindow then MainWindow.BackgroundTransparency = 1 - v end
             SaveConfig()
         end
     })
@@ -1724,7 +1713,7 @@ function Library:BuildSettingsTab()
         end
     })
 
-    -- 主题配色 (分区)
+    -- 主题配色方案 (分区)
     local themeSec = setTab:AddSection({ Title = "主题配色方案" })
 
     themeSec:AddDropdown({
@@ -1735,10 +1724,8 @@ function Library:BuildSettingsTab()
             if Themes[tName] then
                 ThemeColors = Themes[tName]
                 Saved.ThemeName = tName
-                if MainWindow then
-                    MainWindow.BackgroundColor3 = ThemeColors.Background
-                end
-                Library:Notify({ Title = "主题变更", Text = "界面主题已切换为: " .. tName })
+                if MainWindow then MainWindow.BackgroundColor3 = ThemeColors.Background end
+                Library:Notify({ Title = "主题切换", Text = "当前主题已更改为: " .. tName })
                 SaveConfig()
             end
         end
@@ -1774,14 +1761,11 @@ function Library:BuildSettingsTab()
         Placeholder = "rbxassetid://...",
         Callback = function(txt)
             Saved.BackgroundImage = txt
-            if BackgroundImageLabel then
-                BackgroundImageLabel.Image = txt
-            end
+            if BackgroundImageLabel then BackgroundImageLabel.Image = txt end
             SaveConfig()
         end
     })
 
-    -- 悬浮窗控制
     audioSec:AddToggle({
         Text = "启用 FPS / Ping 悬浮窗",
         Default = Saved.FloatingStatusEnabled,
@@ -1791,36 +1775,36 @@ function Library:BuildSettingsTab()
         end
     })
 
-    -- 配置持久化 (分区)
+    -- 配置持久化管理 (分区)
     local cfgSec = setTab:AddSection({ Title = "配置持久化管理" })
 
     cfgSec:AddButton({
         Text = "立即保存当前 UI 配置",
         Callback = function()
             SaveConfig()
-            Library:Notify({ Title = "配置保存", Text = "UI 状态已安全写入本地存储" })
+            Library:Notify({ Title = "配置保存", Text = "UI 状态已成功保存到本地存储！" })
         end
     })
 
     cfgSec:AddButton({
         Text = "重置 UI 配置为默认",
         Callback = function()
-            Saved.Transparency = 1
+            Saved.Transparency = 1.0
             Saved.BorderColorMode = "Pulse"
             Saved.ThemeName = "Dark"
             Saved.SoundEnabled = true
             SaveConfig()
-            Library:Notify({ Title = "配置重置", Text = "请重新载入脚本以应用默认状态" })
+            Library:Notify({ Title = "配置重置", Text = "重置成功，请重新载入脚本生效" })
         end
     })
 
-    -- 作者信息与版权 (分区 + 再分区) - 保障 Logo_quick 标注不可更改
+    -- 作者信息与版权 (分区 + 再分区) - 保障 Log_quick 永久署名
     local creditSec = setTab:AddSection({ Title = "关于与脚本版权" })
     local subAuthor = creditSec:AddSubSection({ Title = "作者署名 (不可修改)" })
 
     subAuthor:AddLabel({
         Text = "UI 框架作者: Log_quick (不可更改)",
-        SubText = "核心库版本: v2.5 Final Master Build",
+        SubText = "核心库版本: v2.5 Final Rebuilt Build",
     })
 
     local scriptAuthorLbl = subAuthor:AddLabel({
@@ -1829,10 +1813,11 @@ function Library:BuildSettingsTab()
     })
 
     subAuthor:AddStatus({
-        Text = "已成功注入: " .. GetExecutorName(),
+        Text = "已注入环境: " .. GetExecutorName(),
         Color = ThemeColors.Success,
     })
 
+    -- API: 让脚本作者设置自己的署名
     function Library:SetScriptAuthor(name)
         Saved.ScriptAuthor = name or "开发者"
         scriptAuthorLbl.Text = "脚本作者: " .. Saved.ScriptAuthor
@@ -1843,7 +1828,7 @@ function Library:BuildSettingsTab()
 end
 
 -- ============================================================
--- [11] 悬浮状态展示 (FPS / Ping 监控)
+-- [11] FPS / Ping Stats Display
 -- ============================================================
 local FloatingStatsGui = nil
 
@@ -1861,7 +1846,7 @@ function Library:ToggleStats(enabled)
     gui.ResetOnSpawn = false
     gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
     gui.IgnoreGuiInset = true
-    gui.Parent = ParentGui
+    gui.Parent = TargetParent
 
     local frame = Instance.new("Frame")
     frame.Size = UDim2.new(0, 150, 0, 42)
@@ -1890,7 +1875,6 @@ function Library:ToggleStats(enabled)
         TextSize = FontBaseSize - 2,
     })
 
-    -- 可拖拽悬浮窗
     local dragging, dragStart, startPos
     frame.InputBegan:Connect(function(input)
         if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
@@ -1913,7 +1897,6 @@ function Library:ToggleStats(enabled)
 
     FloatingStatsGui = gui
 
-    -- 实时帧率/延迟更新循环
     task.spawn(function()
         local lastTime = os.clock()
         local frameCount = 0
@@ -1941,7 +1924,7 @@ function Library:ShowFloatingStatus() Library:ToggleStats(true) end
 function Library:HideFloatingStatus() Library:ToggleStats(false) end
 
 -- ============================================================
--- [12] 水印与全局 API (Watermark)
+-- [12] Watermark & Background APIs
 -- ============================================================
 local WatermarkGui = nil
 
@@ -1956,7 +1939,7 @@ function Library:SetWatermark(opts)
     gui.ResetOnSpawn = false
     gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
     gui.IgnoreGuiInset = true
-    gui.Parent = ParentGui
+    gui.Parent = TargetParent
 
     local frame = Instance.new("Frame")
     frame.Size = UDim2.new(0, 240, 0, 26)
@@ -1969,7 +1952,7 @@ function Library:SetWatermark(opts)
     CreateCorner(frame, 6)
     CreateStroke(frame, ThemeColors.Accent, 1)
 
-    local lbl = MakeLabel(frame, {
+    MakeLabel(frame, {
         Size = UDim2.new(1, -12, 1, 0),
         Position = UDim2.new(0, 8, 0, 0),
         Text = textStr,
@@ -1986,7 +1969,6 @@ function Library:HideWatermark()
     if WatermarkGui then WatermarkGui:Destroy() end
 end
 
--- 背景自定义 API (给开发者定义默认背景)
 function Library:SetBackground(opts)
     opts = opts or {}
     if opts.Image then
@@ -2001,7 +1983,7 @@ function Library:SetBackground(opts)
 end
 
 -- ============================================================
--- [13] 关键字搜索功能 Search System
+-- [13] Fuzzy Search System
 -- ============================================================
 function Library:CreateSearch(opts)
     opts = opts or {}
@@ -2057,7 +2039,7 @@ function Library:CreateSearch(opts)
 end
 
 -- ============================================================
--- [14] 密钥卡密系统 Key System
+-- [14] Key License System
 -- ============================================================
 function Library:CreateKeySystem(opts)
     opts = opts or {}
@@ -2070,7 +2052,7 @@ function Library:CreateKeySystem(opts)
     keyGui.ResetOnSpawn = false
     keyGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
     keyGui.IgnoreGuiInset = true
-    keyGui.Parent = ParentGui
+    keyGui.Parent = TargetParent
 
     local modal = Instance.new("Frame")
     modal.Size = UDim2.new(0, 340, 0, 200)
@@ -2147,21 +2129,21 @@ function Library:CreateKeySystem(opts)
             statusLbl.Text = "已复制 Key 链接到剪贴板！"
             statusLbl.TextColor3 = ThemeColors.Accent
         else
-            statusLbl.Text = "复制失败: 不支持 setclipboard"
+            statusLbl.Text = "复制失败: 环境不支持 setclipboard"
         end
     end)
 
     submitBtn.MouseButton1Click:Connect(function()
         PlaySound(Sounds.Click)
         if inputKeyBox.Text == targetKey then
-            statusLbl.Text = "密钥正确！正在初始化 UI..."
+            statusLbl.Text = "密钥验证成功！正在载入..."
             statusLbl.TextColor3 = ThemeColors.Success
             PlaySound(Sounds.Success)
             task.wait(0.6)
             keyGui:Destroy()
             if opts.Callback then pcall(opts.Callback, true) end
         else
-            statusLbl.Text = "卡密错误，请重试！"
+            statusLbl.Text = "卡密错误，请重新输入！"
             statusLbl.TextColor3 = ThemeColors.Danger
             if opts.Callback then pcall(opts.Callback, false) end
         end
@@ -2169,24 +2151,24 @@ function Library:CreateKeySystem(opts)
 end
 
 -- ============================================================
--- [15] 自动化初始化入口与全局欢迎通知
+-- [15] Main Initialization Routine
 -- ============================================================
 function Library:Initialize(opts)
     opts = opts or {}
 
-    -- 创建主窗口
+    -- 创建 UI 窗口
     Library:CreateWindow(opts)
 
-    -- 默认构建内置 UI 设置面板
+    -- 构建内置 UI 设置面板
     Library:BuildSettingsTab()
 
-    -- 创建搜索栏
+    -- 构建搜索栏
     Library:CreateSearch()
 
     -- 默认开启 FPS / Ping 悬浮窗
     Library:ToggleStats(true)
 
-    -- 欢迎与注入器检测通知 (伴随清脆音效)
+    -- 欢迎与环境识别通知 (伴随清脆音效)
     task.spawn(function()
         task.wait(0.5)
         Library:Notify({
@@ -2196,7 +2178,7 @@ function Library:Initialize(opts)
         })
         task.wait(1.2)
         Library:Notify({
-            Title = "注入环境",
+            Title = "注入检测",
             Text = "已成功通过 " .. GetExecutorName() .. " 注入",
             Duration = 3.5,
         })
@@ -2208,79 +2190,8 @@ return Library
 -- ============================================================
 -- [完整使用示例 Demonstration Code]
 -- 方式一: 如果推送到 GitHub 仓库，使用 HttpGet 在线加载:
--- local LogQuickUI = loadstring(game:HttpGet("https://raw.githubusercontent.com/您的用户名/仓库名/main/script.lua"))()
+-- local LogQuickUI = loadstring(game:HttpGet("https://raw.githubusercontent.com/logz-c/logz-ui-lib/main/script.lua"))()
 --
 -- 方式二: 如果已将 script.lua 保存到注入器本地 workspace 文件夹:
 -- local LogQuickUI = loadstring(readfile("script.lua"))()
 -- ============================================================
-
--- 初始化 UI 主框架
-LogQuickUI:Initialize({
-    Title = "LogQuick 脚本中心",
-    Subtitle = "全能注入器 UI 控制面板",
-    ScriptAuthor = "Log_quick",
-})
-
--- 设置顶部水印
-LogQuickUI:SetWatermark({ Text = "LogQuick Hub | Log_quick | FPS High" })
-
--- 添加 [功能分区 1]
-local mainTab = LogQuickUI:AddTab({ Title = "玩家挂载" })
-
-mainTab:AddLabel({ Text = "核心玩家属性调整", SubText = "调整移动速度与跳跃高度" })
-
-mainTab:AddSlider({
-    Text = "移动速度 (WalkSpeed)",
-    Min = 16,
-    Max = 200,
-    Default = 16,
-    Unit = " px",
-    Callback = function(v)
-        if game.Players.LocalPlayer.Character then
-            game.Players.LocalPlayer.Character.Humanoid.WalkSpeed = v
-        end
-    end
-})
-
-mainTab:AddToggle({
-    Text = "开启无敌模式 (GodMode)",
-    Default = false,
-    Callback = function(state)
-        print("Godmode state:", state)
-    end
-})
-
-mainTab:AddButton({
-    Text = "一键传送至地图中心",
-    Callback = function()
-        LogQuickUI:Notify({ Title = "传送提示", Text = "已成功传送至地图中央！" })
-    end
-})
-
--- [功能再分区 Nested SubSection 示例]
-local sec = mainTab:AddSection({ Title = "高级玩家选框" })
-local subSec = sec:AddSubSection({ Title = "目标玩家选择" })
-
-subSec:AddPlayerSelector({
-    Text = "选择玩家目标",
-    Callback = function(selectedPlayerName)
-        print("Selected Player:", selectedPlayerName)
-    end
-})
-
-subSec:AddInput({
-    Text = "自定义提示词",
-    Placeholder = "输入对玩家说的话...",
-    Callback = function(text)
-        print("Input Text:", text)
-    end
-})
-
-subSec:AddKeybind({
-    Text = "一键锁定快捷键",
-    Default = Enum.KeyCode.F,
-    Callback = function(key)
-        print("Keybind set to:", key.Name)
-    end
-})
-]]
