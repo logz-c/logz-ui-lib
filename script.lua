@@ -1,867 +1,911 @@
--- Roblox UI Library by Log_quick
--- Complete Single File Implementation
+--[[
+    UI Library Name: Log_quick UI Hub
+    Author: Log_quick
+    Description: Advanced, Mobile-friendly, Feature-rich UI Library for Roblox Injectors.
+]]
 
+local LogQuickUI = {}
+
+-- [[ Services ]] --
+local CoreGui = game:GetService("CoreGui")
+local TweenService = game:GetService("TweenService")
 local UserInputService = game:GetService("UserInputService")
 local RunService = game:GetService("RunService")
-local Players = game:GetService("Players")
 local HttpService = game:GetService("HttpService")
+local Players = game:GetService("Players")
+local Stats = game:GetService("Stats")
 
-local UILibrary = {
-    Version = "1.0.0",
-    Author = "Log_quick",
-    Windows = {},
-    Themes = {},
-    Settings = {},
-    Notifications = {},
-    IsMobile = false,
+local LocalPlayer = Players.LocalPlayer
+local Mouse = LocalPlayer:GetMouse()
+local Camera = workspace.CurrentCamera
+
+-- [[ Environment Setup ]] --
+local ParentGui = (gethui and gethui()) or (syn and syn.protect_gui and syn.protect_gui(CoreGui)) or CoreGui
+local ExecutorName = (identifyexecutor and identifyexecutor()) or "Unknown Executor"
+
+-- [[ Mobile Detection & Scaling ]] --
+local isMobile = UserInputService.TouchEnabled and not UserInputService.MouseEnabled
+local ScaleMultiplier = isMobile and 1.3 or 1.0 -- 手机端放大UI
+local FontSize = {
+    Title = 18 * ScaleMultiplier,
+    Subtitle = 14 * ScaleMultiplier,
+    Normal = 14 * ScaleMultiplier,
+    Small = 12 * ScaleMultiplier
 }
 
--- ==================== 移动端检测 ====================
-local function DetectMobile()
-    local UserAgent = game:HttpGet("https://httpbin.org/user-agent")
-    return UserInputService.TouchEnabled and #UserInputService:GetConnectedGamepads() == 0
-end
-
-UILibrary.IsMobile = DetectMobile()
-
--- ==================== 主题系统 ====================
-UILibrary.Themes = {
-    Dark = {
-        Background = Color3.fromRGB(20, 20, 20),
-        Secondary = Color3.fromRGB(30, 30, 30),
-        Text = Color3.fromRGB(255, 255, 255),
-        Accent = Color3.fromRGB(66, 135, 245),
-        Border = Color3.fromRGB(255, 255, 255),
-    },
-    Light = {
-        Background = Color3.fromRGB(240, 240, 240),
-        Secondary = Color3.fromRGB(220, 220, 220),
-        Text = Color3.fromRGB(0, 0, 0),
-        Accent = Color3.fromRGB(66, 135, 245),
-        Border = Color3.fromRGB(0, 0, 0),
-    },
-    Purple = {
-        Background = Color3.fromRGB(25, 20, 35),
-        Secondary = Color3.fromRGB(35, 30, 45),
-        Text = Color3.fromRGB(255, 255, 255),
-        Accent = Color3.fromRGB(150, 100, 255),
-        Border = Color3.fromRGB(150, 100, 255),
-    },
-    Cyberpunk = {
-        Background = Color3.fromRGB(10, 10, 20),
-        Secondary = Color3.fromRGB(15, 15, 30),
-        Text = Color3.fromRGB(0, 255, 200),
-        Accent = Color3.fromRGB(255, 0, 150),
-        Border = Color3.fromRGB(0, 255, 200),
-    }
+-- [[ Sounds ]] --
+local Sounds = {
+    Hover = "rbxassetid://6895079638",
+    Click = "rbxassetid://6895079853",
+    Notify = "rbxassetid://2865227271",
+    Error = "rbxassetid://6895080073"
 }
 
--- ==================== 存储系统 ====================
-local function LoadSettings()
-    local success, data = pcall(function()
-        local stored = readfile("UILibrary_Settings.json")
-        return HttpService:JSONDecode(stored)
-    end)
-    return success and data or {
-        Theme = "Dark",
-        Opacity = 1,
-        BorderColor = Color3.fromRGB(255, 255, 255),
-        BorderMode = "Solid",
-        UISize = 1,
-        Position = UDim2.new(0, 100, 0, 100),
-        ShowFloatingStats = true,
-        BackgroundImage = "",
-        SoundEnabled = true,
-    }
-end
-
-local function SaveSettings()
-    writefile("UILibrary_Settings.json", HttpService:JSONEncode(UILibrary.Settings))
-end
-
-UILibrary.Settings = LoadSettings()
-
--- ==================== 声音系统 ====================
-local SoundManager = {}
-
-function SoundManager:PlaySound(soundName, volume)
-    if not UILibrary.Settings.SoundEnabled then return end
-    
+local function PlaySound(soundType)
     local sound = Instance.new("Sound")
-    sound.Volume = volume or 0.5
+    sound.SoundId = Sounds[soundType] or Sounds.Click
+    sound.Volume = 0.5
     sound.Parent = workspace
-    
-    -- 使用SoundId (可以替换为实际的音效ID)
-    local soundIds = {
-        click = "rbxassetid://12221967",
-        open = "rbxassetid://12221944",
-        close = "rbxassetid://12221960",
-        notify = "rbxassetid://12221967",
-    }
-    
-    sound.SoundId = soundIds[soundName] or soundIds.click
     sound:Play()
-    game:GetService("Debris"):AddItem(sound, 0.5)
+    game.Debris:AddItem(sound, 2)
 end
 
--- ==================== UI创建基础 ====================
-local function CreateWindow(title, subtitle)
-    local screenSize = game:GetService("UserInputService"):GetMouseLocation()
-    local mainWindow = Instance.new("ScreenGui")
-    mainWindow.Name = "UILibraryWindow_" .. title
-    mainWindow.ResetOnSpawn = false
-    mainWindow.Enabled = true
-    
-    if UILibrary.IsMobile then
-        mainWindow.Parent = Players.LocalPlayer:WaitForChild("PlayerGui")
-    else
-        mainWindow.Parent = Players.LocalPlayer:WaitForChild("PlayerGui")
+-- [[ Utility: Create Instance ]] --
+local function Create(className, properties)
+    local inst = Instance.new(className)
+    for k, v in pairs(properties or {}) do
+        if type(k) == "number" then
+            v.Parent = inst
+        else
+            inst[k] = v
+        end
     end
+    return inst
+end
+
+-- [[ Utility: Tweening ]] --
+local function Tween(instance, properties, duration)
+    duration = duration or 0.2
+    local tweenInfo = TweenInfo.new(duration, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+    local tween = TweenService:Create(instance, tweenInfo, properties)
+    tween:Play()
+    return tween
+end
+
+-- [[ Utility: Draggable & Clamping ]] --
+local function MakeDraggable(topbar, frame)
+    local dragging, dragInput, dragStart, startPos
     
-    -- 主容器
-    local container = Instance.new("Frame")
-    container.Name = "Container"
-    container.Size = UDim2.new(0, 300 * UILibrary.Settings.UISize, 0, 400 * UILibrary.Settings.UISize)
-    container.Position = UILibrary.Settings.Position
-    container.BackgroundColor3 = UILibrary.Themes[UILibrary.Settings.Theme].Background
-    container.BackgroundTransparency = 1 - UILibrary.Settings.Opacity
-    container.BorderSizePixel = 2
-    container.BorderColor3 = UILibrary.Settings.BorderColor
-    container.ClipsDescendants = true
-    container.Parent = mainWindow
+    topbar.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            dragging = true
+            dragStart = input.Position
+            startPos = frame.Position
+            input.Changed:Connect(function()
+                if input.UserInputState == Enum.UserInputState.End then
+                    dragging = false
+                end
+            end)
+        end
+    end)
     
-    -- 添加圆角
-    local corner = Instance.new("UICorner")
-    corner.CornerRadius = UDim.new(0, 8)
-    corner.Parent = container
+    topbar.InputChanged:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
+            dragInput = input
+        end
+    end)
     
-    -- 标题栏
-    local titleBar = Instance.new("Frame")
-    titleBar.Name = "TitleBar"
-    titleBar.Size = UDim2.new(1, 0, 0, 50)
-    titleBar.BackgroundColor3 = UILibrary.Themes[UILibrary.Settings.Theme].Secondary
-    titleBar.BorderSizePixel = 0
-    titleBar.Parent = container
+    UserInputService.InputChanged:Connect(function(input)
+        if input == dragInput and dragging then
+            local delta = input.Position - dragStart
+            -- UI不会超出屏幕计算
+            local newX = startPos.X.Offset + delta.X
+            local newY = startPos.Y.Offset + delta.Y
+            
+            local maxX = Camera.ViewportSize.X - frame.AbsoluteSize.X
+            local maxY = Camera.ViewportSize.Y - frame.AbsoluteSize.Y
+            
+            newX = math.clamp(newX, 0, maxX)
+            newY = math.clamp(newY, 0, maxY)
+            
+            Tween(frame, {Position = UDim2.new(0, newX, 0, newY)}, 0.1)
+        end
+    end)
+end
+
+-- [[ Theme & Config System ]] --
+LogQuickUI.Theme = {
+    Background = Color3.fromRGB(20, 20, 25),
+    Secondary = Color3.fromRGB(30, 30, 35),
+    Accent = Color3.fromRGB(85, 170, 255),
+    Text = Color3.fromRGB(255, 255, 255),
+    DarkText = Color3.fromRGB(150, 150, 150),
+    Border = Color3.fromRGB(40, 40, 45)
+}
+
+LogQuickUI.Config = {
+    Transparency = 0,
+    RainbowBorder = false,
+    ScriptAuthor = "Unknown"
+}
+
+-- [[ ScreenGui Setup ]] --
+local ScreenGui = Create("ScreenGui", {
+    Name = "LogQuick_Hub",
+    Parent = ParentGui,
+    ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
+    ResetOnSpawn = false
+})
+
+-- [[ Floating Status (FPS/Ping) ]] --
+local StatusUI = Create("Frame", {
+    Parent = ScreenGui,
+    Size = UDim2.new(0, 120, 0, 40),
+    Position = UDim2.new(0, 10, 0, 10),
+    BackgroundColor3 = LogQuickUI.Theme.Background,
+    BackgroundTransparency = 0.5,
+    BorderSizePixel = 0,
+    Visible = true,
+    Create("UICorner", {CornerRadius = UDim.new(0, 6)}),
+    Create("TextLabel", {
+        Name = "Display",
+        Size = UDim2.new(1, 0, 1, 0),
+        BackgroundTransparency = 1,
+        Text = "FPS: 0 | Ping: 0ms",
+        TextColor3 = LogQuickUI.Theme.Text,
+        Font = Enum.Font.GothamBold,
+        TextSize = FontSize.Small
+    })
+})
+MakeDraggable(StatusUI, StatusUI)
+
+RunService.RenderStepped:Connect(function()
+    local fps = math.floor(1 / RunService.RenderStepped:Wait())
+    local ping = "0"
+    pcall(function() ping = string.split(Stats.Network.ServerStatsItem["Data Ping"]:GetValueString(), " ")[1] end)
+    StatusUI.Display.Text = "FPS: " .. fps .. " | Ping: " .. ping .. "ms"
+end)
+
+function LogQuickUI:SetStatusVisible(state)
+    StatusUI.Visible = state
+end
+
+-- [[ Watermark System ]] --
+local WatermarkFrame = Create("Frame", {
+    Parent = ScreenGui,
+    Size = UDim2.new(0, 200, 0, 30),
+    Position = UDim2.new(0.5, -100, 0, 10),
+    BackgroundColor3 = LogQuickUI.Theme.Background,
+    BackgroundTransparency = 0.2,
+    Visible = false,
+    Create("UICorner", {CornerRadius = UDim.new(0, 6)}),
+    Create("UIStroke", {Color = LogQuickUI.Theme.Accent, Thickness = 1}),
+    Create("TextLabel", {
+        Name = "Text",
+        Size = UDim2.new(1, 0, 1, 0),
+        BackgroundTransparency = 1,
+        Text = "Log_quick Hub",
+        TextColor3 = LogQuickUI.Theme.Text,
+        Font = Enum.Font.GothamSemibold,
+        TextSize = FontSize.Small
+    })
+})
+function LogQuickUI:SetWatermark(text, visible)
+    WatermarkFrame.Text.Text = text
+    WatermarkFrame.Visible = visible
+end
+
+-- [[ Notification System ]] --
+local NotifContainer = Create("Frame", {
+    Parent = ScreenGui,
+    Size = UDim2.new(0, 250, 1, -20),
+    Position = UDim2.new(1, -260, 0, 10),
+    BackgroundTransparency = 1,
+    Create("UIListLayout", {
+        SortOrder = Enum.SortOrder.LayoutOrder,
+        VerticalAlignment = Enum.VerticalAlignment.Bottom,
+        Padding = UDim.new(0, 10)
+    })
+})
+
+function LogQuickUI:Notify(title, text, duration)
+    PlaySound("Notify")
+    duration = duration or 3
+    local Notif = Create("Frame", {
+        Parent = NotifContainer,
+        Size = UDim2.new(1, 0, 0, 60),
+        BackgroundColor3 = LogQuickUI.Theme.Background,
+        BackgroundTransparency = 1,
+        Create("UICorner", {CornerRadius = UDim.new(0, 6)}),
+        Create("UIStroke", {Color = LogQuickUI.Theme.Accent, Thickness = 1}),
+        Create("TextLabel", {
+            Name = "Title",
+            Position = UDim2.new(0, 10, 0, 5),
+            Size = UDim2.new(1, -20, 0, 20),
+            BackgroundTransparency = 1,
+            Text = title,
+            TextColor3 = LogQuickUI.Theme.Accent,
+            Font = Enum.Font.GothamBold,
+            TextSize = FontSize.Normal,
+            TextXAlignment = Enum.TextXAlignment.Left,
+            TextTransparency = 1
+        }),
+        Create("TextLabel", {
+            Name = "Desc",
+            Position = UDim2.new(0, 10, 0, 25),
+            Size = UDim2.new(1, -20, 0, 30),
+            BackgroundTransparency = 1,
+            Text = text,
+            TextColor3 = LogQuickUI.Theme.Text,
+            Font = Enum.Font.Gotham,
+            TextSize = FontSize.Small,
+            TextXAlignment = Enum.TextXAlignment.Left,
+            TextWrapped = true,
+            TextTransparency = 1
+        })
+    })
     
-    local titleText = Instance.new("TextLabel")
-    titleText.Name = "Title"
-    titleText.Size = UDim2.new(1, -40, 0, 30)
-    titleText.Position = UDim2.new(0, 10, 0, 5)
-    titleText.BackgroundTransparency = 1
-    titleText.TextColor3 = UILibrary.Themes[UILibrary.Settings.Theme].Text
-    titleText.TextSize = 18 * UILibrary.Settings.UISize
-    titleText.Text = title
-    titleText.TextXAlignment = Enum.TextXAlignment.Left
-    titleText.Font = Enum.Font.GothamBold
-    titleText.Parent = titleBar
+    Tween(Notif, {BackgroundTransparency = 0.1}, 0.3)
+    Tween(Notif.Title, {TextTransparency = 0}, 0.3)
+    Tween(Notif.Desc, {TextTransparency = 0}, 0.3)
     
-    if subtitle then
-        local subtitleText = Instance.new("TextLabel")
-        subtitleText.Name = "Subtitle"
-        subtitleText.Size = UDim2.new(1, -40, 0, 15)
-        subtitleText.Position = UDim2.new(0, 10, 0, 32)
-        subtitleText.BackgroundTransparency = 1
-        subtitleText.TextColor3 = UILibrary.Themes[UILibrary.Settings.Theme].Text
-        subtitleText.TextSize = 12 * UILibrary.Settings.UISize
-        subtitleText.Text = subtitle
-        subtitleText.TextXAlignment = Enum.TextXAlignment.Left
-        subtitleText.Font = Enum.Font.Gotham
-        subtitleText.Parent = titleBar
+    task.spawn(function()
+        task.wait(duration)
+        Tween(Notif, {BackgroundTransparency = 1}, 0.3)
+        Tween(Notif.Title, {TextTransparency = 1}, 0.3)
+        local t = Tween(Notif.Desc, {TextTransparency = 1}, 0.3)
+        t.Completed:Wait()
+        Notif:Destroy()
+    end)
+end
+
+-- [[ Key System ]] --
+function LogQuickUI:CreateKeySystem(expectedKey, title, callback)
+    local KeyOverlay = Create("Frame", {
+        Parent = ScreenGui,
+        Size = UDim2.new(1, 0, 1, 0),
+        BackgroundColor3 = Color3.fromRGB(0,0,0),
+        BackgroundTransparency = 0.3,
+        Active = true
+    })
+    local KeyBox = Create("Frame", {
+        Parent = KeyOverlay,
+        Size = UDim2.new(0, 300, 0, 150),
+        Position = UDim2.new(0.5, -150, 0.5, -75),
+        BackgroundColor3 = LogQuickUI.Theme.Background,
+        Create("UICorner", {CornerRadius = UDim.new(0, 8)}),
+        Create("UIStroke", {Color = LogQuickUI.Theme.Accent, Thickness = 2}),
+        Create("TextLabel", {
+            Text = title or "Key System",
+            Size = UDim2.new(1, 0, 0, 40),
+            BackgroundTransparency = 1,
+            TextColor3 = LogQuickUI.Theme.Accent,
+            Font = Enum.Font.GothamBold,
+            TextSize = FontSize.Title
+        }),
+        Create("TextBox", {
+            Name = "Input",
+            Size = UDim2.new(0.9, 0, 0, 35),
+            Position = UDim2.new(0.05, 0, 0, 50),
+            BackgroundColor3 = LogQuickUI.Theme.Secondary,
+            TextColor3 = LogQuickUI.Theme.Text,
+            PlaceholderText = "Enter Key Here...",
+            Text = "",
+            Font = Enum.Font.Gotham,
+            TextSize = FontSize.Normal,
+            Create("UICorner", {CornerRadius = UDim.new(0, 4)})
+        })
+    })
+    
+    local Submit = Create("TextButton", {
+        Parent = KeyBox,
+        Size = UDim2.new(0.9, 0, 0, 35),
+        Position = UDim2.new(0.05, 0, 0, 95),
+        BackgroundColor3 = LogQuickUI.Theme.Accent,
+        Text = "Submit",
+        TextColor3 = Color3.fromRGB(255,255,255),
+        Font = Enum.Font.GothamBold,
+        TextSize = FontSize.Normal,
+        Create("UICorner", {CornerRadius = UDim.new(0, 4)})
+    })
+    
+    Submit.MouseButton1Click:Connect(function()
+        PlaySound("Click")
+        if KeyBox.Input.Text == expectedKey then
+            LogQuickUI:Notify("Success", "Key Accepted!", 3)
+            Tween(KeyOverlay, {BackgroundTransparency = 1}, 0.5)
+            Tween(KeyBox, {BackgroundTransparency = 1}, 0.5).Completed:Wait()
+            KeyOverlay:Destroy()
+            callback(true)
+        else
+            PlaySound("Error")
+            KeyBox.Input.Text = ""
+            KeyBox.Input.PlaceholderText = "Incorrect Key!"
+        end
+    end)
+end
+
+-- [[ Main Window Creation ]] --
+function LogQuickUI:CreateWindow(options)
+    options = options or {}
+    local Title = options.Title or "Log_quick Hub"
+    local Subtitle = options.Subtitle or "Premium Injector UI"
+    local DefaultSize = isMobile and UDim2.new(0, 500, 0, 300) or UDim2.new(0, 600, 0, 400)
+    
+    LogQuickUI.Config.ScriptAuthor = options.Author or "Unknown"
+
+    local MainFrame = Create("Frame", {
+        Parent = ScreenGui,
+        Size = DefaultSize,
+        Position = UDim2.new(0.5, -DefaultSize.X.Offset/2, 0.5, -DefaultSize.Y.Offset/2),
+        BackgroundColor3 = LogQuickUI.Theme.Background,
+        ClipsDescendants = true,
+        Create("UICorner", {CornerRadius = UDim.new(0, 8)})
+    })
+    
+    local MainStroke = Create("UIStroke", {
+        Parent = MainFrame,
+        Color = LogQuickUI.Theme.Accent,
+        Thickness = 2
+    })
+
+    -- Rainbow Border Logic
+    RunService.RenderStepped:Connect(function()
+        if LogQuickUI.Config.RainbowBorder then
+            local hue = tick() % 5 / 5
+            MainStroke.Color = Color3.fromHSV(hue, 1, 1)
+        elseif MainStroke.Color ~= LogQuickUI.Theme.Accent then
+            MainStroke.Color = LogQuickUI.Theme.Accent
+        end
+        MainFrame.BackgroundTransparency = LogQuickUI.Config.Transparency
+    end)
+
+    -- Topbar
+    local Topbar = Create("Frame", {
+        Parent = MainFrame,
+        Size = UDim2.new(1, 0, 0, 40),
+        BackgroundTransparency = 1
+    })
+    MakeDraggable(Topbar, MainFrame)
+    
+    Create("TextLabel", {
+        Parent = Topbar,
+        Position = UDim2.new(0, 15, 0, 0),
+        Size = UDim2.new(0.5, 0, 1, 0),
+        BackgroundTransparency = 1,
+        Text = Title .. " | <font color='rgb(150,150,150)'>" .. Subtitle .. "</font>",
+        RichText = true,
+        TextColor3 = LogQuickUI.Theme.Text,
+        Font = Enum.Font.GothamBold,
+        TextSize = FontSize.Title,
+        TextXAlignment = Enum.TextXAlignment.Left
+    })
+
+    -- Background Image Support
+    local BgImage = Create("ImageLabel", {
+        Parent = MainFrame,
+        Size = UDim2.new(1, 0, 1, 0),
+        ZIndex = 0,
+        BackgroundTransparency = 1,
+        ImageTransparency = 0.8,
+        Visible = false
+    })
+
+    -- Content Area
+    local TabContainer = Create("ScrollingFrame", {
+        Parent = MainFrame,
+        Size = UDim2.new(0, 130, 1, -50),
+        Position = UDim2.new(0, 10, 0, 40),
+        BackgroundTransparency = 1,
+        ScrollBarThickness = 0,
+        Create("UIListLayout", {Padding = UDim.new(0, 5)})
+    })
+
+    local PageContainer = Create("Frame", {
+        Parent = MainFrame,
+        Size = UDim2.new(1, -150, 1, -50),
+        Position = UDim2.new(0, 140, 0, 40),
+        BackgroundTransparency = 1
+    })
+
+    -- Loading Animation
+    MainFrame.Size = UDim2.new(0,0,0,0)
+    Tween(MainFrame, {Size = DefaultSize}, 0.8)
+    LogQuickUI:Notify("Welcome!", "Injected via " .. ExecutorName, 4)
+
+    local Window = {
+        CurrentTab = nil,
+        Tabs = {}
+    }
+
+    -- Set Background API
+    function Window:SetBackground(imageId, transparency)
+        BgImage.Image = "rbxassetid://" .. imageId
+        BgImage.ImageTransparency = transparency or 0.8
+        BgImage.Visible = true
     end
-    
-    -- 关闭按钮
-    local closeButton = Instance.new("TextButton")
-    closeButton.Name = "CloseButton"
-    closeButton.Size = UDim2.new(0, 30, 0, 30)
-    closeButton.Position = UDim2.new(1, -35, 0, 10)
-    closeButton.BackgroundColor3 = Color3.fromRGB(255, 50, 50)
-    closeButton.TextColor3 = Color3.fromRGB(255, 255, 255)
-    closeButton.TextSize = 16
-    closeButton.Text = "✕"
-    closeButton.Font = Enum.Font.GothamBold
-    closeButton.BorderSizePixel = 0
-    closeButton.Parent = titleBar
-    
-    local closeCorner = Instance.new("UICorner")
-    closeCorner.CornerRadius = UDim.new(0, 4)
-    closeCorner.Parent = closeButton
-    
-    closeButton.MouseButton1Click:Connect(function()
-        SoundManager:PlaySound("close", 0.5)
-        mainWindow:Destroy()
-    end)
-    
-    -- 拖动功能
-    local dragging = false
-    local dragStart = Vector2.new()
-    local windowStart = UDim2.new()
-    
-    titleBar.InputBegan:Connect(function(input, gameProcessed)
-        if gameProcessed then return end
-        if input.UserInputType == Enum.UserInputType.MouseButton1 then
-            dragging = true
-            dragStart = UserInputService:GetMouseLocation()
-            windowStart = container.Position
-        end
-    end)
-    
-    UserInputService.InputChanged:Connect(function(input, gameProcessed)
-        if dragging and input.UserInputType == Enum.UserInputType.MouseMovement then
-            local delta = UserInputService:GetMouseLocation() - dragStart
-            local newPos = UDim2.new(windowStart.X.Scale, windowStart.X.Offset + delta.X, 
-                                     windowStart.Y.Scale, windowStart.Y.Offset + delta.Y)
-            container.Position = newPos
-            UILibrary.Settings.Position = newPos
-            SaveSettings()
-        end
-    end)
-    
-    UserInputService.InputEnded:Connect(function(input, gameProcessed)
-        if input.UserInputType == Enum.UserInputType.MouseButton1 then
-            dragging = false
-        end
-    end)
-    
-    -- 内容容器
-    local contentFrame = Instance.new("Frame")
-    contentFrame.Name = "Content"
-    contentFrame.Size = UDim2.new(1, -10, 1, -60)
-    contentFrame.Position = UDim2.new(0, 5, 0, 55)
-    contentFrame.BackgroundTransparency = 1
-    contentFrame.ClipsDescendants = true
-    contentFrame.Parent = container
-    
-    local contentLayout = Instance.new("UIListLayout")
-    contentLayout.Padding = UDim.new(0, 8)
-    contentLayout.Parent = contentFrame
-    
-    local window = {
-        MainWindow = mainWindow,
-        Container = container,
-        Content = contentFrame,
-        Title = titleText,
-        SoundManager = SoundManager,
-        Sections = {},
-    }
-    
-    table.insert(UILibrary.Windows, window)
-    SoundManager:PlaySound("open", 0.6)
-    
-    return window
-end
 
--- ==================== 区域系统 ====================
-function UILibrary:CreateSection(window, sectionName)
-    local section = Instance.new("Frame")
-    section.Name = "Section_" .. sectionName
-    section.Size = UDim2.new(1, 0, 0, 0)
-    section.BackgroundColor3 = UILibrary.Themes[UILibrary.Settings.Theme].Secondary
-    section.BorderSizePixel = 1
-    section.BorderColor3 = UILibrary.Settings.BorderColor
-    section.Parent = window.Content
-    
-    local corner = Instance.new("UICorner")
-    corner.CornerRadius = UDim.new(0, 6)
-    corner.Parent = section
-    
-    local sectionTitle = Instance.new("TextLabel")
-    sectionTitle.Name = "SectionTitle"
-    sectionTitle.Size = UDim2.new(1, -10, 0, 25)
-    sectionTitle.Position = UDim2.new(0, 5, 0, 0)
-    sectionTitle.BackgroundTransparency = 1
-    sectionTitle.TextColor3 = UILibrary.Themes[UILibrary.Settings.Theme].Accent
-    sectionTitle.TextSize = 14 * UILibrary.Settings.UISize
-    sectionTitle.Text = sectionName
-    sectionTitle.TextXAlignment = Enum.TextXAlignment.Left
-    sectionTitle.Font = Enum.Font.GothamBold
-    sectionTitle.Parent = section
-    
-    local sectionContent = Instance.new("Frame")
-    sectionContent.Name = "SectionContent"
-    sectionContent.Size = UDim2.new(1, -10, 1, -30)
-    sectionContent.Position = UDim2.new(0, 5, 0, 28)
-    sectionContent.BackgroundTransparency = 1
-    sectionContent.Parent = section
-    
-    local sectionLayout = Instance.new("UIListLayout")
-    sectionLayout.Padding = UDim.new(0, 5)
-    sectionLayout.Parent = sectionContent
-    
-    local sectionObj = {
-        Frame = section,
-        Content = sectionContent,
-        Title = sectionTitle,
-        Items = {},
-    }
-    
-    table.insert(window.Sections, sectionObj)
-    return sectionObj
-end
-
--- ==================== UI元素 ====================
-
--- 按钮
-function UILibrary:CreateButton(section, buttonText, callback)
-    local buttonFrame = Instance.new("TextButton")
-    buttonFrame.Name = "Button_" .. buttonText
-    buttonFrame.Size = UDim2.new(1, 0, 0, 35)
-    buttonFrame.BackgroundColor3 = UILibrary.Themes[UILibrary.Settings.Theme].Accent
-    buttonFrame.TextColor3 = UILibrary.Themes[UILibrary.Settings.Theme].Text
-    buttonFrame.TextSize = 12 * UILibrary.Settings.UISize
-    buttonFrame.Text = buttonText
-    buttonFrame.Font = Enum.Font.GothamBold
-    buttonFrame.BorderSizePixel = 0
-    buttonFrame.Parent = section.Content
-    
-    local corner = Instance.new("UICorner")
-    corner.CornerRadius = UDim.new(0, 4)
-    corner.Parent = buttonFrame
-    
-    buttonFrame.MouseButton1Click:Connect(function()
-        SoundManager:PlaySound("click", 0.5)
-        if callback then callback() end
-    end)
-    
-    buttonFrame.MouseEnter:Connect(function()
-        buttonFrame.BackgroundColor3 = Color3.fromHSV(
-            UILibrary.Themes[UILibrary.Settings.Theme].Accent:GetHSV()
-        )
-    end)
-    
-    return buttonFrame
-end
-
--- 开关
-function UILibrary:CreateToggle(section, toggleText, defaultValue, callback)
-    local toggleFrame = Instance.new("Frame")
-    toggleFrame.Name = "Toggle_" .. toggleText
-    toggleFrame.Size = UDim2.new(1, 0, 0, 30)
-    toggleFrame.BackgroundTransparency = 1
-    toggleFrame.Parent = section.Content
-    
-    local label = Instance.new("TextLabel")
-    label.Size = UDim2.new(1, -40, 1, 0)
-    label.Position = UDim2.new(0, 0, 0, 0)
-    label.BackgroundTransparency = 1
-    label.TextColor3 = UILibrary.Themes[UILibrary.Settings.Theme].Text
-    label.TextSize = 12 * UILibrary.Settings.UISize
-    label.Text = toggleText
-    label.TextXAlignment = Enum.TextXAlignment.Left
-    label.Font = Enum.Font.Gotham
-    label.Parent = toggleFrame
-    
-    local toggleButton = Instance.new("TextButton")
-    toggleButton.Name = "ToggleButton"
-    toggleButton.Size = UDim2.new(0, 35, 0, 20)
-    toggleButton.Position = UDim2.new(1, -35, 0, 5)
-    toggleButton.BackgroundColor3 = defaultValue and UILibrary.Themes[UILibrary.Settings.Theme].Accent or Color3.fromRGB(100, 100, 100)
-    toggleButton.TextColor3 = UILibrary.Themes[UILibrary.Settings.Theme].Text
-    toggleButton.TextSize = 10
-    toggleButton.Text = defaultValue and "ON" or "OFF"
-    toggleButton.Font = Enum.Font.GothamBold
-    toggleButton.BorderSizePixel = 0
-    toggleButton.Parent = toggleFrame
-    
-    local corner = Instance.new("UICorner")
-    corner.CornerRadius = UDim.new(0, 4)
-    corner.Parent = toggleButton
-    
-    local isToggled = defaultValue
-    
-    toggleButton.MouseButton1Click:Connect(function()
-        SoundManager:PlaySound("click", 0.5)
-        isToggled = not isToggled
-        toggleButton.BackgroundColor3 = isToggled and UILibrary.Themes[UILibrary.Settings.Theme].Accent or Color3.fromRGB(100, 100, 100)
-        toggleButton.Text = isToggled and "ON" or "OFF"
-        if callback then callback(isToggled) end
-    end)
-    
-    return {Frame = toggleFrame, Button = toggleButton, GetValue = function() return isToggled end}
-end
-
--- 滑块
-function UILibrary:CreateSlider(section, sliderText, minValue, maxValue, defaultValue, callback)
-    local sliderFrame = Instance.new("Frame")
-    sliderFrame.Name = "Slider_" .. sliderText
-    sliderFrame.Size = UDim2.new(1, 0, 0, 50)
-    sliderFrame.BackgroundTransparency = 1
-    sliderFrame.Parent = section.Content
-    
-    local label = Instance.new("TextLabel")
-    label.Size = UDim2.new(1, 0, 0, 20)
-    label.BackgroundTransparency = 1
-    label.TextColor3 = UILibrary.Themes[UILibrary.Settings.Theme].Text
-    label.TextSize = 12 * UILibrary.Settings.UISize
-    label.Text = sliderText .. ": " .. tostring(math.floor(defaultValue))
-    label.TextXAlignment = Enum.TextXAlignment.Left
-    label.Font = Enum.Font.Gotham
-    label.Parent = sliderFrame
-    
-    local sliderBackground = Instance.new("Frame")
-    sliderBackground.Name = "Background"
-    sliderBackground.Size = UDim2.new(1, 0, 0, 5)
-    sliderBackground.Position = UDim2.new(0, 0, 0, 25)
-    sliderBackground.BackgroundColor3 = Color3.fromRGB(80, 80, 80)
-    sliderBackground.BorderSizePixel = 0
-    sliderBackground.Parent = sliderFrame
-    
-    local sliderCorner = Instance.new("UICorner")
-    sliderCorner.CornerRadius = UDim.new(0, 3)
-    sliderCorner.Parent = sliderBackground
-    
-    local sliderFill = Instance.new("Frame")
-    sliderFill.Name = "Fill"
-    sliderFill.Size = UDim2.new((defaultValue - minValue) / (maxValue - minValue), 0, 1, 0)
-    sliderFill.BackgroundColor3 = UILibrary.Themes[UILibrary.Settings.Theme].Accent
-    sliderFill.BorderSizePixel = 0
-    sliderFill.Parent = sliderBackground
-    
-    local fillCorner = Instance.new("UICorner")
-    fillCorner.CornerRadius = UDim.new(0, 3)
-    fillCorner.Parent = sliderFill
-    
-    local sliderButton = Instance.new("TextButton")
-    sliderButton.Name = "Slider"
-    sliderButton.Size = UDim2.new(0, 15, 0, 15)
-    sliderButton.Position = UDim2.new((defaultValue - minValue) / (maxValue - minValue), -7.5, 0, 20)
-    sliderButton.BackgroundColor3 = UILibrary.Themes[UILibrary.Settings.Theme].Accent
-    sliderButton.BorderSizePixel = 0
-    sliderButton.Text = ""
-    sliderButton.Parent = sliderFrame
-    
-    local buttonCorner = Instance.new("UICorner")
-    buttonCorner.CornerRadius = UDim.new(1, 0)
-    buttonCorner.Parent = sliderButton
-    
-    local currentValue = defaultValue
-    local dragging = false
-    
-    sliderButton.InputBegan:Connect(function(input, gameProcessed)
-        if input.UserInputType == Enum.UserInputType.MouseButton1 then
-            dragging = true
-        end
-    end)
-    
-    UserInputService.InputChanged:Connect(function(input, gameProcessed)
-        if dragging and input.UserInputType == Enum.UserInputType.MouseMovement then
-            local mouse = game:GetService("UserInputService"):GetMouseLocation()
-            local relativeX = math.clamp(mouse.X - sliderBackground.AbsolutePosition.X, 0, sliderBackground.AbsoluteSize.X)
-            local percentage = relativeX / sliderBackground.AbsoluteSize.X
-            currentValue = math.floor(minValue + (maxValue - minValue) * percentage)
-            
-            sliderButton.Position = UDim2.new(percentage, -7.5, 0, 20)
-            sliderFill.Size = UDim2.new(percentage, 0, 1, 0)
-            label.Text = sliderText .. ": " .. tostring(currentValue)
-            
-            if callback then callback(currentValue) end
-        end
-    end)
-    
-    UserInputService.InputEnded:Connect(function(input, gameProcessed)
-        if input.UserInputType == Enum.UserInputType.MouseButton1 then
-            dragging = false
-        end
-    end)
-    
-    return {Frame = sliderFrame, GetValue = function() return currentValue end}
-end
-
--- 输入框
-function UILibrary:CreateInput(section, inputText, placeholder, callback)
-    local inputFrame = Instance.new("Frame")
-    inputFrame.Name = "Input_" .. inputText
-    inputFrame.Size = UDim2.new(1, 0, 0, 50)
-    inputFrame.BackgroundTransparency = 1
-    inputFrame.Parent = section.Content
-    
-    local label = Instance.new("TextLabel")
-    label.Size = UDim2.new(1, 0, 0, 18)
-    label.BackgroundTransparency = 1
-    label.TextColor3 = UILibrary.Themes[UILibrary.Settings.Theme].Text
-    label.TextSize = 12 * UILibrary.Settings.UISize
-    label.Text = inputText
-    label.TextXAlignment = Enum.TextXAlignment.Left
-    label.Font = Enum.Font.Gotham
-    label.Parent = inputFrame
-    
-    local inputBox = Instance.new("TextBox")
-    inputBox.Name = "InputBox"
-    inputBox.Size = UDim2.new(1, 0, 0, 25)
-    inputBox.Position = UDim2.new(0, 0, 0, 23)
-    inputBox.BackgroundColor3 = UILibrary.Themes[UILibrary.Settings.Theme].Secondary
-    inputBox.TextColor3 = UILibrary.Themes[UILibrary.Settings.Theme].Text
-    inputBox.PlaceholderColor3 = Color3.fromRGB(150, 150, 150)
-    inputBox.PlaceholderText = placeholder
-    inputBox.Text = ""
-    inputBox.TextSize = 12
-    inputBox.Font = Enum.Font.Gotham
-    inputBox.BorderSizePixel = 1
-    inputBox.BorderColor3 = UILibrary.Settings.BorderColor
-    inputBox.Parent = inputFrame
-    
-    local inputCorner = Instance.new("UICorner")
-    inputCorner.CornerRadius = UDim.new(0, 4)
-    inputCorner.Parent = inputBox
-    
-    inputBox.FocusLost:Connect(function(enterPressed)
-        if enterPressed and callback then
-            callback(inputBox.Text)
-        end
-    end)
-    
-    return {Frame = inputFrame, TextBox = inputBox, GetValue = function() return inputBox.Text end}
-end
-
--- 下拉菜单
-function UILibrary:CreateDropdown(section, dropdownText, options, defaultIndex, callback)
-    local dropdownFrame = Instance.new("Frame")
-    dropdownFrame.Name = "Dropdown_" .. dropdownText
-    dropdownFrame.Size = UDim2.new(1, 0, 0, 35)
-    dropdownFrame.BackgroundTransparency = 1
-    dropdownFrame.Parent = section.Content
-    
-    local selectedValue = options[defaultIndex or 1]
-    
-    local button = Instance.new("TextButton")
-    button.Name = "DropdownButton"
-    button.Size = UDim2.new(1, 0, 1, 0)
-    button.BackgroundColor3 = UILibrary.Themes[UILibrary.Settings.Theme].Secondary
-    button.TextColor3 = UILibrary.Themes[UILibrary.Settings.Theme].Text
-    button.TextSize = 12
-    button.Text = selectedValue .. " ▼"
-    button.Font = Enum.Font.Gotham
-    button.BorderSizePixel = 1
-    button.BorderColor3 = UILibrary.Settings.BorderColor
-    button.Parent = dropdownFrame
-    
-    local buttonCorner = Instance.new("UICorner")
-    buttonCorner.CornerRadius = UDim.new(0, 4)
-    buttonCorner.Parent = button
-    
-    local isOpen = false
-    local optionsFrame = Instance.new("Frame")
-    optionsFrame.Name = "OptionsFrame"
-    optionsFrame.Size = UDim2.new(1, 0, 0, #options * 30)
-    optionsFrame.Position = UDim2.new(0, 0, 1, 2)
-    optionsFrame.BackgroundColor3 = UILibrary.Themes[UILibrary.Settings.Theme].Secondary
-    optionsFrame.BorderSizePixel = 1
-    optionsFrame.BorderColor3 = UILibrary.Settings.BorderColor
-    optionsFrame.Visible = false
-    optionsFrame.Parent = dropdownFrame
-    
-    local optionsCorner = Instance.new("UICorner")
-    optionsCorner.CornerRadius = UDim.new(0, 4)
-    optionsCorner.Parent = optionsFrame
-    
-    local optionsLayout = Instance.new("UIListLayout")
-    optionsLayout.Padding = UDim.new(0, 0)
-    optionsLayout.Parent = optionsFrame
-    
-    for i, option in ipairs(options) do
-        local optionButton = Instance.new("TextButton")
-        optionButton.Size = UDim2.new(1, 0, 0, 30)
-        optionButton.BackgroundColor3 = UILibrary.Themes[UILibrary.Settings.Theme].Secondary
-        optionButton.TextColor3 = UILibrary.Themes[UILibrary.Settings.Theme].Text
-        optionButton.TextSize = 12
-        optionButton.Text = option
-        optionButton.Font = Enum.Font.Gotham
-        optionButton.BorderSizePixel = 0
-        optionButton.Parent = optionsFrame
+    -- Tab System
+    function Window:CreateTab(tabName, iconId)
+        local TabBtn = Create("TextButton", {
+            Parent = TabContainer,
+            Size = UDim2.new(1, 0, 0, 30),
+            BackgroundColor3 = LogQuickUI.Theme.Secondary,
+            Text = "  " .. tabName,
+            TextColor3 = LogQuickUI.Theme.DarkText,
+            Font = Enum.Font.GothamSemibold,
+            TextSize = FontSize.Normal,
+            TextXAlignment = Enum.TextXAlignment.Left,
+            Create("UICorner", {CornerRadius = UDim.new(0, 6)})
+        })
         
-        optionButton.MouseButton1Click:Connect(function()
-            SoundManager:PlaySound("click", 0.5)
-            selectedValue = option
-            button.Text = selectedValue .. " ▼"
-            optionsFrame.Visible = false
-            isOpen = false
-            if callback then callback(selectedValue) end
+        local Page = Create("ScrollingFrame", {
+            Parent = PageContainer,
+            Size = UDim2.new(1, 0, 1, 0),
+            BackgroundTransparency = 1,
+            ScrollBarThickness = 2,
+            Visible = false,
+            Create("UIListLayout", {Padding = UDim.new(0, 10)})
+        })
+
+        TabBtn.MouseButton1Click:Connect(function()
+            PlaySound("Click")
+            for _, t in pairs(Window.Tabs) do
+                t.Page.Visible = false
+                Tween(t.Btn, {TextColor3 = LogQuickUI.Theme.DarkText, BackgroundColor3 = LogQuickUI.Theme.Secondary}, 0.2)
+            end
+            Page.Visible = true
+            Tween(TabBtn, {TextColor3 = LogQuickUI.Theme.Accent, BackgroundColor3 = LogQuickUI.Theme.Background}, 0.2)
+        end)
+
+        local Tab = {Page = Page, Btn = TabBtn}
+        table.insert(Window.Tabs, Tab)
+        
+        if #Window.Tabs == 1 then
+            Page.Visible = true
+            TabBtn.TextColor3 = LogQuickUI.Theme.Accent
+        end
+
+        -- Section System (Sub-partitions)
+        function Tab:CreateSection(secName)
+            local SecFrame = Create("Frame", {
+                Parent = Page,
+                Size = UDim2.new(1, -10, 0, 30), -- Auto-expands
+                BackgroundColor3 = LogQuickUI.Theme.Background,
+                BackgroundTransparency = 0.5,
+                Create("UICorner", {CornerRadius = UDim.new(0, 6)}),
+                Create("UIStroke", {Color = LogQuickUI.Theme.Border, Thickness = 1})
+            })
+            
+            Create("TextLabel", {
+                Parent = SecFrame,
+                Size = UDim2.new(1, -10, 0, 25),
+                Position = UDim2.new(0, 5, 0, 0),
+                BackgroundTransparency = 1,
+                Text = secName,
+                TextColor3 = LogQuickUI.Theme.Accent,
+                Font = Enum.Font.GothamBold,
+                TextSize = FontSize.Normal,
+                TextXAlignment = Enum.TextXAlignment.Left
+            })
+
+            local SecLayout = Create("UIListLayout", {
+                Parent = SecFrame,
+                Padding = UDim.new(0, 8),
+                HorizontalAlignment = Enum.HorizontalAlignment.Center,
+                SortOrder = Enum.SortOrder.LayoutOrder
+            })
+
+            -- Add padding top
+            Create("Frame", {Parent = SecFrame, Size = UDim2.new(1,0,0,25), BackgroundTransparency=1})
+
+            SecLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
+                SecFrame.Size = UDim2.new(1, -10, 0, SecLayout.AbsoluteContentSize.Y + 10)
+                Page.CanvasSize = UDim2.new(0, 0, 0, Page.UIListLayout.AbsoluteContentSize.Y + 20)
+            end)
+
+            local Elements = {}
+
+            -- [[ UI Elements ]] --
+
+            -- Label
+            function Elements:AddLabel(text)
+                Create("TextLabel", {
+                    Parent = SecFrame,
+                    Size = UDim2.new(0.95, 0, 0, 20),
+                    BackgroundTransparency = 1,
+                    Text = text,
+                    TextColor3 = LogQuickUI.Theme.Text,
+                    Font = Enum.Font.Gotham,
+                    TextSize = FontSize.Normal,
+                    TextXAlignment = Enum.TextXAlignment.Left
+                })
+            end
+
+            -- Button
+            function Elements:AddButton(text, callback)
+                local Btn = Create("TextButton", {
+                    Parent = SecFrame,
+                    Size = UDim2.new(0.95, 0, 0, 35),
+                    BackgroundColor3 = LogQuickUI.Theme.Secondary,
+                    Text = text,
+                    TextColor3 = LogQuickUI.Theme.Text,
+                    Font = Enum.Font.GothamSemibold,
+                    TextSize = FontSize.Normal,
+                    Create("UICorner", {CornerRadius = UDim.new(0, 4)}),
+                    Create("UIStroke", {Color = LogQuickUI.Theme.Border, Thickness = 1})
+                })
+                Btn.MouseEnter:Connect(function() Tween(Btn, {BackgroundColor3 = LogQuickUI.Theme.Border}, 0.2); PlaySound("Hover") end)
+                Btn.MouseLeave:Connect(function() Tween(Btn, {BackgroundColor3 = LogQuickUI.Theme.Secondary}, 0.2) end)
+                Btn.MouseButton1Click:Connect(function() PlaySound("Click"); callback() end)
+            end
+
+            -- Toggle
+            function Elements:AddToggle(text, default, callback)
+                local state = default or false
+                local TglFrame = Create("TextButton", {
+                    Parent = SecFrame,
+                    Size = UDim2.new(0.95, 0, 0, 35),
+                    BackgroundColor3 = LogQuickUI.Theme.Secondary,
+                    Text = "",
+                    Create("UICorner", {CornerRadius = UDim.new(0, 4)})
+                })
+                Create("TextLabel", {
+                    Parent = TglFrame,
+                    Size = UDim2.new(0.8, 0, 1, 0),
+                    Position = UDim2.new(0, 10, 0, 0),
+                    BackgroundTransparency = 1,
+                    Text = text,
+                    TextColor3 = LogQuickUI.Theme.Text,
+                    Font = Enum.Font.Gotham,
+                    TextSize = FontSize.Normal,
+                    TextXAlignment = Enum.TextXAlignment.Left
+                })
+                local Indicator = Create("Frame", {
+                    Parent = TglFrame,
+                    Size = UDim2.new(0, 40, 0, 20),
+                    Position = UDim2.new(1, -50, 0.5, -10),
+                    BackgroundColor3 = state and LogQuickUI.Theme.Accent or LogQuickUI.Theme.Border,
+                    Create("UICorner", {CornerRadius = UDim.new(1, 0)})
+                })
+                local Circle = Create("Frame", {
+                    Parent = Indicator,
+                    Size = UDim2.new(0, 16, 0, 16),
+                    Position = state and UDim2.new(1, -18, 0, 2) or UDim2.new(0, 2, 0, 2),
+                    BackgroundColor3 = Color3.fromRGB(255,255,255),
+                    Create("UICorner", {CornerRadius = UDim.new(1, 0)})
+                })
+
+                local function fire()
+                    state = not state
+                    Tween(Indicator, {BackgroundColor3 = state and LogQuickUI.Theme.Accent or LogQuickUI.Theme.Border}, 0.2)
+                    Tween(Circle, {Position = state and UDim2.new(1, -18, 0, 2) or UDim2.new(0, 2, 0, 2)}, 0.2)
+                    callback(state)
+                end
+                TglFrame.MouseButton1Click:Connect(function() PlaySound("Click"); fire() end)
+                if state then callback(state) end
+            end
+
+            -- Slider
+            function Elements:AddSlider(text, min, max, default, callback)
+                local SldFrame = Create("Frame", {
+                    Parent = SecFrame,
+                    Size = UDim2.new(0.95, 0, 0, 50),
+                    BackgroundColor3 = LogQuickUI.Theme.Secondary,
+                    Create("UICorner", {CornerRadius = UDim.new(0, 4)})
+                })
+                Create("TextLabel", {
+                    Parent = SldFrame,
+                    Size = UDim2.new(1, -10, 0, 20),
+                    Position = UDim2.new(0, 10, 0, 5),
+                    BackgroundTransparency = 1,
+                    Text = text,
+                    TextColor3 = LogQuickUI.Theme.Text,
+                    Font = Enum.Font.Gotham,
+                    TextSize = FontSize.Normal,
+                    TextXAlignment = Enum.TextXAlignment.Left
+                })
+                local ValueTxt = Create("TextLabel", {
+                    Parent = SldFrame,
+                    Size = UDim2.new(1, -10, 0, 20),
+                    Position = UDim2.new(0, 0, 0, 5),
+                    BackgroundTransparency = 1,
+                    Text = tostring(default),
+                    TextColor3 = LogQuickUI.Theme.Text,
+                    Font = Enum.Font.Gotham,
+                    TextSize = FontSize.Normal,
+                    TextXAlignment = Enum.TextXAlignment.Right
+                })
+                local Bar = Create("TextButton", {
+                    Parent = SldFrame,
+                    Size = UDim2.new(1, -20, 0, 6),
+                    Position = UDim2.new(0, 10, 0, 35),
+                    BackgroundColor3 = LogQuickUI.Theme.Border,
+                    Text = "",
+                    Create("UICorner", {CornerRadius = UDim.new(1, 0)})
+                })
+                local Fill = Create("Frame", {
+                    Parent = Bar,
+                    Size = UDim2.new((default-min)/(max-min), 0, 1, 0),
+                    BackgroundColor3 = LogQuickUI.Theme.Accent,
+                    Create("UICorner", {CornerRadius = UDim.new(1, 0)})
+                })
+
+                local dragging = false
+                local function update(input)
+                    local pos = math.clamp((input.Position.X - Bar.AbsolutePosition.X) / Bar.AbsoluteSize.X, 0, 1)
+                    local val = math.floor(min + ((max - min) * pos))
+                    Tween(Fill, {Size = UDim2.new(pos, 0, 1, 0)}, 0.1)
+                    ValueTxt.Text = tostring(val)
+                    callback(val)
+                end
+                Bar.InputBegan:Connect(function(i)
+                    if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
+                        dragging = true; update(i)
+                    end
+                end)
+                UserInputService.InputEnded:Connect(function(i)
+                    if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then dragging = false end
+                end)
+                UserInputService.InputChanged:Connect(function(i)
+                    if dragging and (i.UserInputType == Enum.UserInputType.MouseMovement or i.UserInputType == Enum.UserInputType.Touch) then
+                        update(i)
+                    end
+                end)
+            end
+
+            -- Dropdown
+            function Elements:AddDropdown(text, list, callback)
+                local DropFrame = Create("Frame", {
+                    Parent = SecFrame,
+                    Size = UDim2.new(0.95, 0, 0, 35),
+                    BackgroundColor3 = LogQuickUI.Theme.Secondary,
+                    ClipsDescendants = true,
+                    Create("UICorner", {CornerRadius = UDim.new(0, 4)})
+                })
+                local TopBtn = Create("TextButton", {
+                    Parent = DropFrame,
+                    Size = UDim2.new(1, 0, 0, 35),
+                    BackgroundTransparency = 1,
+                    Text = ""
+                })
+                local Title = Create("TextLabel", {
+                    Parent = DropFrame,
+                    Size = UDim2.new(1, -30, 0, 35),
+                    Position = UDim2.new(0, 10, 0, 0),
+                    BackgroundTransparency = 1,
+                    Text = text .. " : None",
+                    TextColor3 = LogQuickUI.Theme.Text,
+                    Font = Enum.Font.Gotham,
+                    TextSize = FontSize.Normal,
+                    TextXAlignment = Enum.TextXAlignment.Left
+                })
+                local Scroll = Create("ScrollingFrame", {
+                    Parent = DropFrame,
+                    Size = UDim2.new(1, 0, 1, -35),
+                    Position = UDim2.new(0, 0, 0, 35),
+                    BackgroundTransparency = 1,
+                    ScrollBarThickness = 2,
+                    Create("UIListLayout", {Padding = UDim.new(0,2)})
+                })
+
+                local open = false
+                TopBtn.MouseButton1Click:Connect(function()
+                    PlaySound("Click")
+                    open = not open
+                    local h = open and math.min(#list * 25 + 40, 150) or 35
+                    Tween(DropFrame, {Size = UDim2.new(0.95, 0, 0, h)}, 0.2)
+                end)
+
+                local function buildList()
+                    for _, v in pairs(Scroll:GetChildren()) do if v:IsA("TextButton") then v:Destroy() end end
+                    for _, item in pairs(list) do
+                        local btn = Create("TextButton", {
+                            Parent = Scroll,
+                            Size = UDim2.new(1, 0, 0, 25),
+                            BackgroundColor3 = LogQuickUI.Theme.Background,
+                            Text = item,
+                            TextColor3 = LogQuickUI.Theme.DarkText,
+                            Font = Enum.Font.Gotham,
+                            TextSize = FontSize.Small
+                        })
+                        btn.MouseButton1Click:Connect(function()
+                            PlaySound("Click")
+                            Title.Text = text .. " : " .. item
+                            open = false
+                            Tween(DropFrame, {Size = UDim2.new(0.95, 0, 0, 35)}, 0.2)
+                            callback(item)
+                        end)
+                    end
+                    Scroll.CanvasSize = UDim2.new(0,0,0,#list*25)
+                end
+                buildList()
+                
+                -- API to refresh dropdown (e.g. for players)
+                return {
+                    Refresh = function(newList)
+                        list = newList
+                        buildList()
+                    end
+                }
+            end
+
+            -- Input (Textbox)
+            function Elements:AddInput(text, callback)
+                local InpFrame = Create("Frame", {
+                    Parent = SecFrame,
+                    Size = UDim2.new(0.95, 0, 0, 35),
+                    BackgroundColor3 = LogQuickUI.Theme.Secondary,
+                    Create("UICorner", {CornerRadius = UDim.new(0, 4)})
+                })
+                Create("TextLabel", {
+                    Parent = InpFrame,
+                    Size = UDim2.new(0.5, 0, 1, 0),
+                    Position = UDim2.new(0, 10, 0, 0),
+                    BackgroundTransparency = 1,
+                    Text = text,
+                    TextColor3 = LogQuickUI.Theme.Text,
+                    Font = Enum.Font.Gotham,
+                    TextSize = FontSize.Normal,
+                    TextXAlignment = Enum.TextXAlignment.Left
+                })
+                local Box = Create("TextBox", {
+                    Parent = InpFrame,
+                    Size = UDim2.new(0.4, 0, 0.7, 0),
+                    Position = UDim2.new(0.55, 0, 0.15, 0),
+                    BackgroundColor3 = LogQuickUI.Theme.Background,
+                    TextColor3 = LogQuickUI.Theme.Text,
+                    Text = "",
+                    PlaceholderText = "Input...",
+                    Font = Enum.Font.Gotham,
+                    TextSize = FontSize.Small,
+                    Create("UICorner", {CornerRadius = UDim.new(0, 4)})
+                })
+                Box.FocusLost:Connect(function() callback(Box.Text) end)
+            end
+
+            -- Basic Keybind
+            function Elements:AddKeybind(text, defaultKey, callback)
+                local key = defaultKey
+                local BindFrame = Create("Frame", {
+                    Parent = SecFrame,
+                    Size = UDim2.new(0.95, 0, 0, 35),
+                    BackgroundColor3 = LogQuickUI.Theme.Secondary,
+                    Create("UICorner", {CornerRadius = UDim.new(0, 4)})
+                })
+                Create("TextLabel", {
+                    Parent = BindFrame,
+                    Size = UDim2.new(0.6, 0, 1, 0),
+                    Position = UDim2.new(0, 10, 0, 0),
+                    BackgroundTransparency = 1,
+                    Text = text,
+                    TextColor3 = LogQuickUI.Theme.Text,
+                    Font = Enum.Font.Gotham,
+                    TextSize = FontSize.Normal,
+                    TextXAlignment = Enum.TextXAlignment.Left
+                })
+                local Btn = Create("TextButton", {
+                    Parent = BindFrame,
+                    Size = UDim2.new(0.3, 0, 0.7, 0),
+                    Position = UDim2.new(0.65, 0, 0.15, 0),
+                    BackgroundColor3 = LogQuickUI.Theme.Background,
+                    Text = key.Name,
+                    TextColor3 = LogQuickUI.Theme.Accent,
+                    Font = Enum.Font.GothamBold,
+                    TextSize = FontSize.Small,
+                    Create("UICorner", {CornerRadius = UDim.new(0, 4)})
+                })
+                
+                local waiting = false
+                Btn.MouseButton1Click:Connect(function()
+                    waiting = true
+                    Btn.Text = "..."
+                end)
+                UserInputService.InputBegan:Connect(function(i, p)
+                    if not p and waiting and i.UserInputType == Enum.UserInputType.Keyboard then
+                        key = i.KeyCode
+                        Btn.Text = key.Name
+                        waiting = false
+                    elseif not p and not waiting and i.KeyCode == key then
+                        callback()
+                    end
+                end)
+            end
+
+            return Elements
+        end
+
+        return Tab
+    end
+
+    -- [[ Built-in UI Settings Tab ]] --
+    local SettingsTab = Window:CreateTab("UI Settings", "rbxassetid://1234567") -- Placeholder icon id
+    local UIConf = SettingsTab:CreateSection("Customization")
+    
+    UIConf:AddLabel("UI Author: Log_quick")
+    UIConf:AddLabel("Script Author: " .. LogQuickUI.Config.ScriptAuthor)
+    
+    UIConf:AddToggle("Rainbow Border", false, function(state)
+        LogQuickUI.Config.RainbowBorder = state
+    end)
+    
+    UIConf:AddSlider("UI Transparency", 0, 100, 0, function(val)
+        LogQuickUI.Config.Transparency = val / 100
+        MainFrame.BackgroundTransparency = LogQuickUI.Config.Transparency
+    end)
+
+    -- Simple Color Preset Dropdown (Full HSV is complex for single file, using preset + hex approach)
+    UIConf:AddDropdown("Theme Color", {"Blue", "Red", "Green", "Purple", "White"}, function(sel)
+        local colors = {
+            Blue = Color3.fromRGB(85, 170, 255),
+            Red = Color3.fromRGB(255, 85, 85),
+            Green = Color3.fromRGB(85, 255, 127),
+            Purple = Color3.fromRGB(170, 85, 255),
+            White = Color3.fromRGB(255, 255, 255)
+        }
+        LogQuickUI.Theme.Accent = colors[sel]
+    end)
+
+    local UtilConf = SettingsTab:CreateSection("Utilities")
+    UtilConf:AddToggle("Floating Stats (FPS/Ping)", true, function(state)
+        LogQuickUI:SetStatusVisible(state)
+    end)
+
+    return Window
+end
+
+return LogQuickUI
+
+--[[ 
+=========================================
+      HOW TO USE EXAMPLE (Developer)
+=========================================
+
+local Library = loadstring(game:HttpGet("YOUR_GITHUB_RAW_URL_HERE"))()
+-- 或者如果你是单文件测试，直接： local Library = LogQuickUI
+
+-- 1. Key System (可选)
+Library:CreateKeySystem("1234", "Premium Script Key", function(success)
+    if success then
+        -- 2. Create Window
+        local Window = Library:CreateWindow({
+            Title = "My Epic Hub",
+            Subtitle = "V1.0",
+            Author = "YourName"
+        })
+        
+        -- Window:SetBackground("12345678", 0.5) -- 自定义背景API
+        Library:SetWatermark("My Epic Hub | FPS: Stable", true)
+
+        -- 3. Create Tabs & Sections
+        local MainTab = Window:CreateTab("Main Features")
+        local CombatSec = MainTab:CreateSection("Combat")
+        
+        -- 4. Add Elements
+        CombatSec:AddButton("Kill All", function()
+            Library:Notify("Action", "Killed everyone!", 2)
+        end)
+        
+        CombatSec:AddToggle("Aimbot", false, function(state)
+            print("Aimbot:", state)
+        end)
+        
+        CombatSec:AddSlider("FOV", 10, 120, 70, function(val)
+            game.Workspace.CurrentCamera.FieldOfView = val
+        end)
+
+        -- 5. Player Selector Example
+        local playersList = {}
+        for _,v in pairs(game.Players:GetPlayers()) do table.insert(playersList, v.Name) end
+        
+        local pDrop = CombatSec:AddDropdown("Select Player", playersList, function(target)
+            print("Selected:", target)
+        end)
+        
+        game.Players.PlayerAdded:Connect(function(p)
+            table.insert(playersList, p.Name)
+            pDrop.Refresh(playersList)
         end)
     end
-    
-    button.MouseButton1Click:Connect(function()
-        isOpen = not isOpen
-        optionsFrame.Visible = isOpen
-    end)
-    
-    return {Frame = dropdownFrame, GetValue = function() return selectedValue end}
-end
-
--- HSV颜色盘
-function UILibrary:CreateColorPicker(section, colorText, defaultColor, callback)
-    local colorFrame = Instance.new("Frame")
-    colorFrame.Name = "ColorPicker_" .. colorText
-    colorFrame.Size = UDim2.new(1, 0, 0, 180)
-    colorFrame.BackgroundTransparency = 1
-    colorFrame.Parent = section.Content
-    
-    local label = Instance.new("TextLabel")
-    label.Size = UDim2.new(1, 0, 0, 20)
-    label.BackgroundTransparency = 1
-    label.TextColor3 = UILibrary.Themes[UILibrary.Settings.Theme].Text
-    label.TextSize = 12 * UILibrary.Settings.UISize
-    label.Text = colorText
-    label.TextXAlignment = Enum.TextXAlignment.Left
-    label.Font = Enum.Font.Gotham
-    label.Parent = colorFrame
-    
-    -- SV选择器
-    local svPicker = Instance.new("Frame")
-    svPicker.Name = "SVPicker"
-    svPicker.Size = UDim2.new(1, 0, 0, 120)
-    svPicker.Position = UDim2.new(0, 0, 0, 25)
-    svPicker.BackgroundColor3 = defaultColor
-    svPicker.BorderSizePixel = 1
-    svPicker.BorderColor3 = UILibrary.Settings.BorderColor
-    svPicker.Parent = colorFrame
-    
-    local svCorner = Instance.new("UICorner")
-    svCorner.CornerRadius = UDim.new(0, 4)
-    svCorner.Parent = svPicker
-    
-    local svCursor = Instance.new("Frame")
-    svCursor.Name = "Cursor"
-    svCursor.Size = UDim2.new(0, 8, 0, 8)
-    svCursor.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
-    svCursor.BorderSizePixel = 1
-    svCursor.BorderColor3 = Color3.fromRGB(0, 0, 0)
-    svCursor.Parent = svPicker
-    
-    local currentColor = defaultColor
-    local h, s, v = defaultColor:GetHSV()
-    
-    local function UpdateColor()
-        if callback then callback(currentColor) end
-    end
-    
-    svPicker.InputBegan:Connect(function(input, gameProcessed)
-        if input.UserInputType == Enum.UserInputType.MouseButton1 then
-            local mouse = game:GetService("UserInputService"):GetMouseLocation()
-            local relX = math.clamp((mouse.X - svPicker.AbsolutePosition.X) / svPicker.AbsoluteSize.X, 0, 1)
-            local relY = math.clamp((mouse.Y - svPicker.AbsolutePosition.Y) / svPicker.AbsoluteSize.Y, 0, 1)
-            
-            s = relX
-            v = 1 - relY
-            currentColor = Color3.fromHSV(h, s, v)
-            
-            svCursor.Position = UDim2.new(relX, -4, relY, -4)
-            svPicker.BackgroundColor3 = currentColor
-            UpdateColor()
-        end
-    end)
-    
-    return {Frame = colorFrame, GetValue = function() return currentColor end}
-end
-
--- 标签
-function UILibrary:CreateLabel(section, labelText)
-    local labelFrame = Instance.new("TextLabel")
-    labelFrame.Name = "Label_" .. labelText
-    labelFrame.Size = UDim2.new(1, 0, 0, 25)
-    labelFrame.BackgroundTransparency = 1
-    labelFrame.TextColor3 = UILibrary.Themes[UILibrary.Settings.Theme].Text
-    labelFrame.TextSize = 12 * UILibrary.Settings.UISize
-    labelFrame.Text = labelText
-    labelFrame.TextXAlignment = Enum.TextXAlignment.Left
-    labelFrame.Font = Enum.Font.Gotham
-    labelFrame.Parent = section.Content
-    
-    return labelFrame
-end
-
--- 通知系统
-function UILibrary:SendNotification(title, message, duration, soundEnabled)
-    duration = duration or 3
-    
-    local notificationGui = Instance.new("ScreenGui")
-    notificationGui.Name = "Notification"
-    notificationGui.ResetOnSpawn = false
-    notificationGui.Parent = Players.LocalPlayer:WaitForChild("PlayerGui")
-    
-    local notificationFrame = Instance.new("Frame")
-    notificationFrame.Name = "NotificationFrame"
-    notificationFrame.Size = UDim2.new(0, 300, 0, 100)
-    notificationFrame.Position = UDim2.new(1, -320, 0, 20)
-    notificationFrame.BackgroundColor3 = UILibrary.Themes[UILibrary.Settings.Theme].Secondary
-    notificationFrame.BorderSizePixel = 2
-    notificationFrame.BorderColor3 = UILibrary.Settings.BorderColor
-    notificationFrame.Parent = notificationGui
-    
-    local corner = Instance.new("UICorner")
-    corner.CornerRadius = UDim.new(0, 8)
-    corner.Parent = notificationFrame
-    
-    local titleLabel = Instance.new("TextLabel")
-    titleLabel.Size = UDim2.new(1, -10, 0, 30)
-    titleLabel.Position = UDim2.new(0, 5, 0, 5)
-    titleLabel.BackgroundTransparency = 1
-    titleLabel.TextColor3 = UILibrary.Themes[UILibrary.Settings.Theme].Accent
-    titleLabel.TextSize = 14
-    titleLabel.Text = title
-    titleLabel.TextXAlignment = Enum.TextXAlignment.Left
-    titleLabel.Font = Enum.Font.GothamBold
-    titleLabel.Parent = notificationFrame
-    
-    local messageLabel = Instance.new("TextLabel")
-    messageLabel.Size = UDim2.new(1, -10, 0, 55)
-    messageLabel.Position = UDim2.new(0, 5, 0, 35)
-    messageLabel.BackgroundTransparency = 1
-    messageLabel.TextColor3 = UILibrary.Themes[UILibrary.Settings.Theme].Text
-    messageLabel.TextSize = 12
-    messageLabel.Text = message
-    messageLabel.TextWrapped = true
-    messageLabel.TextXAlignment = Enum.TextXAlignment.Left
-    messageLabel.Font = Enum.Font.Gotham
-    messageLabel.Parent = notificationFrame
-    
-    if soundEnabled then
-        SoundManager:PlaySound("notify", 0.6)
-    end
-    
-    task.wait(duration)
-    notificationGui:Destroy()
-end
-
--- ==================== UI设置面板 ====================
-function UILibrary:CreateSettingsPanel()
-    local settingsWindow = CreateWindow("UI Settings", "Customization Panel")
-    
-    -- 主题部分
-    local themeSection = self:CreateSection(settingsWindow, "Theme")
-    
-    self:CreateDropdown(themeSection, "Select Theme", {"Dark", "Light", "Purple", "Cyberpunk"}, 1, function(value)
-        UILibrary.Settings.Theme = value
-        SaveSettings()
-        self:SendNotification("Theme Changed", "Theme set to " .. value, 2)
-    end)
-    
-    -- 颜色选择
-    local colorSection = self:CreateSection(settingsWindow, "Custom Color")
-    self:CreateColorPicker(colorSection, "Pick Custom Color", Color3.fromRGB(66, 135, 245), function(color)
-        UILibrary.Settings.BorderColor = color
-        SaveSettings()
-    end)
-    
-    -- 透明度
-    local opacitySection = self:CreateSection(settingsWindow, "Opacity")
-    self:CreateSlider(opacitySection, "UI Opacity", 0.3, 1, UILibrary.Settings.Opacity, function(value)
-        UILibrary.Settings.Opacity = value / 100
-        SaveSettings()
-    end)
-    
-    -- 大小
-    local sizeSection = self:CreateSection(settingsWindow, "UI Size")
-    self:CreateSlider(sizeSection, "UI Scale", 0.5, 2, UILibrary.Settings.UISize, function(value)
-        UILibrary.Settings.UISize = value / 100
-        SaveSettings()
-    end)
-    
-    -- 声音
-    local soundSection = self:CreateSection(settingsWindow, "Sound")
-    self:CreateToggle(soundSection, "Enable Sound", UILibrary.Settings.SoundEnabled, function(value)
-        UILibrary.Settings.SoundEnabled = value
-        SaveSettings()
-    end)
-    
-    -- 浮动统计
-    local statsSection = self:CreateSection(settingsWindow, "Statistics")
-    self:CreateToggle(statsSection, "Show Floating Stats", UILibrary.Settings.ShowFloatingStats, function(value)
-        UILibrary.Settings.ShowFloatingStats = value
-        SaveSettings()
-    end)
-    
-    -- 关于
-    local aboutSection = self:CreateSection(settingsWindow, "About")
-    self:CreateLabel(aboutSection, "UI Library v" .. UILibrary.Version)
-    self:CreateLabel(aboutSection, "Author: " .. UILibrary.Author)
-    
-    self:SendNotification("Welcome!", "UI Library loaded successfully!", 3)
-    
-    return settingsWindow
-end
-
--- ==================== 浮动统计窗口 ====================
-function UILibrary:CreateFloatingStats()
-    local statsGui = Instance.new("ScreenGui")
-    statsGui.Name = "FloatingStats"
-    statsGui.ResetOnSpawn = false
-    statsGui.Parent = Players.LocalPlayer:WaitForChild("PlayerGui")
-    
-    local statsFrame = Instance.new("Frame")
-    statsFrame.Name = "StatsFrame"
-    statsFrame.Size = UDim2.new(0, 150, 0, 80)
-    statsFrame.Position = UDim2.new(1, -160, 1, -90)
-    statsFrame.BackgroundColor3 = UILibrary.Themes[UILibrary.Settings.Theme].Background
-    statsFrame.BackgroundTransparency = 0.3
-    statsFrame.BorderSizePixel = 1
-    statsFrame.BorderColor3 = UILibrary.Settings.BorderColor
-    statsFrame.Parent = statsGui
-    
-    local corner = Instance.new("UICorner")
-    corner.CornerRadius = UDim.new(0, 6)
-    corner.Parent = statsFrame
-    
-    local layout = Instance.new("UIListLayout")
-    layout.Padding = UDim.new(0, 3)
-    layout.Parent = statsFrame
-    
-    local fpsLabel = Instance.new("TextLabel")
-    fpsLabel.Size = UDim2.new(1, -10, 0, 20)
-    fpsLabel.Position = UDim2.new(0, 5, 0, 5)
-    fpsLabel.BackgroundTransparency = 1
-    fpsLabel.TextColor3 = UILibrary.Themes[UILibrary.Settings.Theme].Accent
-    fpsLabel.TextSize = 11
-    fpsLabel.Text = "FPS: 60"
-    fpsLabel.TextXAlignment = Enum.TextXAlignment.Left
-    fpsLabel.Font = Enum.Font.GothamBold
-    fpsLabel.Parent = statsFrame
-    
-    local pingLabel = Instance.new("TextLabel")
-    pingLabel.Size = UDim2.new(1, -10, 0, 20)
-    pingLabel.BackgroundTransparency = 1
-    pingLabel.TextColor3 = UILibrary.Themes[UILibrary.Settings.Theme].Accent
-    pingLabel.TextSize = 11
-    pingLabel.Text = "Ping: 0ms"
-    pingLabel.TextXAlignment = Enum.TextXAlignment.Left
-    pingLabel.Font = Enum.Font.GothamBold
-    pingLabel.Parent = statsFrame
-    
-    local lastUpdate = tick()
-    local frameCount = 0
-    
-    RunService.RenderStepped:Connect(function()
-        frameCount = frameCount + 1
-        local currentTime = tick()
-        
-        if currentTime - lastUpdate >= 1 then
-            fpsLabel.Text = "FPS: " .. frameCount
-            frameCount = 0
-            lastUpdate = currentTime
-        end
-        
-        local ping = Players:FindFirstChild(Players.LocalPlayer.Name)
-        if ping then
-            pingLabel.Text = "Ping: " .. tostring(math.floor(game:GetService("Stats").Network.ServerReplicator:FindFirstChild("DataReceiveKbps") and game:GetService("Stats").Network.ServerReplicator.DataReceiveKbps.Value or 0)) .. "ms"
-        end
-    end)
-    
-    return statsGui
-end
-
--- ==================== API导出 ====================
-return {
-    CreateWindow = function(title, subtitle) return CreateWindow(title, subtitle) end,
-    CreateSection = function(window, name) return UILibrary:CreateSection(window, name) end,
-    CreateButton = function(section, text, callback) return UILibrary:CreateButton(section, text, callback) end,
-    CreateToggle = function(section, text, default, callback) return UILibrary:CreateToggle(section, text, default, callback) end,
-    CreateSlider = function(section, text, min, max, default, callback) return UILibrary:CreateSlider(section, text, min, max, default, callback) end,
-    CreateInput = function(section, text, placeholder, callback) return UILibrary:CreateInput(section, text, placeholder, callback) end,
-    CreateDropdown = function(section, text, options, default, callback) return UILibrary:CreateDropdown(section, text, options, default, callback) end,
-    CreateColorPicker = function(section, text, default, callback) return UILibrary:CreateColorPicker(section, text, default, callback) end,
-    CreateLabel = function(section, text) return UILibrary:CreateLabel(section, text) end,
-    SendNotification = function(title, message, duration) return UILibrary:SendNotification(title, message, duration) end,
-    CreateSettingsPanel = function() return UILibrary:CreateSettingsPanel() end,
-    CreateFloatingStats = function() return UILibrary:CreateFloatingStats() end,
-    IsMobile = UILibrary.IsMobile,
-    Version = UILibrary.Version,
-    Author = UILibrary.Author,
-}
+end)
+]]
