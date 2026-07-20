@@ -1,0 +1,1428 @@
+--[[
+    ========================================================================
+    LOG_QUICK PREMIUM UI LIBRARY (v1.0.0)
+    Developed by: Log_quick
+    Supports: PC & Mobile (Auto-adaptive)
+    GitHub Ready - Single File Production Build
+    ========================================================================
+]]
+
+local UserInputService = game:GetService("UserInputService")
+local TweenService = game:GetService("TweenService")
+local HttpService = game:GetService("HttpService")
+local RunService = game:GetService("RunService")
+local Players = game:GetService("Players")
+local CoreGui = game:GetService("CoreGui")
+
+local LocalPlayer = Players.LocalPlayer
+local Mouse = LocalPlayer:GetMouse()
+
+-- 获取注入器名称
+local function getExecutor()
+    return (identifyexecutor and identifyexecutor()) or (getexecutorname and getexecutorname()) or "Unknown Executor"
+end
+
+-- 声音播放器
+local function playSound(soundId, volume)
+    if not soundId then return end
+    local sound = Instance.new("Sound")
+    sound.SoundId = "rbxassetid://" .. tostring(soundId):gsub("rbxassetid://", "")
+    sound.Volume = volume or 0.5
+    sound.Parent = CoreGui
+    sound:Play()
+    sound.Ended:Connect(function()
+        sound:Destroy()
+    end)
+end
+
+-- 核心库表
+local LogQuickLib = {
+    Themes = {
+        Dark = {
+            Background = Color3.fromRGB(24, 24, 28),
+            Sidebar = Color3.fromRGB(18, 18, 22),
+            Accent = Color3.fromRGB(100, 110, 245),
+            Text = Color3.fromRGB(240, 240, 245),
+            TextMuted = Color3.fromRGB(140, 140, 150),
+            Element = Color3.fromRGB(32, 32, 38),
+            Border = Color3.fromRGB(45, 45, 52)
+        },
+        Light = {
+            Background = Color3.fromRGB(245, 245, 250),
+            Sidebar = Color3.fromRGB(235, 235, 240),
+            Accent = Color3.fromRGB(80, 90, 220),
+            Text = Color3.fromRGB(30, 30, 35),
+            TextMuted = Color3.fromRGB(110, 110, 120),
+            Element = Color3.fromRGB(255, 255, 255),
+            Border = Color3.fromRGB(210, 210, 220)
+        }
+    },
+    CurrentTheme = nil,
+    Config = {
+        Theme = "Dark",
+        CustomAccent = Color3.fromRGB(100, 110, 245),
+        Transparency = 0.05,
+        BorderSize = 1,
+        BorderMode = "Solid", -- Solid, Rainbow, Breathe
+        UI_Scale = 1.0,
+        SoundEnabled = true,
+        SoundVolume = 0.5,
+        SoundID = "4590662766", -- 清脆女声/点击声
+        BgImage = "",
+        BgOpacity = 0.2,
+        Position = nil
+    ,   FloatingHUD = true
+    },
+    ActiveTweens = {},
+    ElementsCount = 0
+}
+
+LogQuickLib.CurrentTheme = LogQuickLib.Themes.Dark
+
+-- 配置读写
+local configFilePath = "LogQuick_UI_Config.json"
+local function saveConfig()
+    if writefile then
+        local success, err = pcall(function()
+            local data = {
+                Theme = LogQuickLib.Config.Theme,
+                CustomAccent = {LogQuickLib.Config.CustomAccent.R, LogQuickLib.Config.CustomAccent.G, LogQuickLib.Config.CustomAccent.B},
+                Transparency = LogQuickLib.Config.Transparency,
+                BorderSize = LogQuickLib.Config.BorderSize,
+                BorderMode = LogQuickLib.Config.BorderMode,
+                UI_Scale = LogQuickLib.Config.UI_Scale,
+                SoundEnabled = LogQuickLib.Config.SoundEnabled,
+                SoundVolume = LogQuickLib.Config.SoundVolume,
+                SoundID = LogQuickLib.Config.SoundID,
+                BgImage = LogQuickLib.Config.BgImage,
+                BgOpacity = LogQuickLib.Config.BgOpacity,
+                Position = LogQuickLib.Config.Position and {LogQuickLib.Config.Position.X, LogQuickLib.Config.Position.Y} or nil,
+                FloatingHUD = LogQuickLib.Config.FloatingHUD
+            }
+            writefile(configFilePath, HttpService:JSONEncode(data))
+        end)
+    end
+end
+
+local function loadConfig()
+    if readfile and isfile and isfile(configFilePath) then
+        local success, err = pcall(function()
+            local data = HttpService:JSONDecode(readfile(configFilePath))
+            if data then
+                LogQuickLib.Config.Theme = data.Theme or LogQuickLib.Config.Theme
+                if data.CustomAccent then
+                    LogQuickLib.Config.CustomAccent = Color3.new(data.CustomAccent[1], data.CustomAccent[2], data.CustomAccent[3])
+                end
+                LogQuickLib.Config.Transparency = data.Transparency or LogQuickLib.Config.Transparency
+                LogQuickLib.Config.BorderSize = data.BorderSize or LogQuickLib.Config.BorderSize
+                LogQuickLib.Config.BorderMode = data.BorderMode or LogQuickLib.Config.BorderMode
+                LogQuickLib.Config.UI_Scale = data.UI_Scale or LogQuickLib.Config.UI_Scale
+                LogQuickLib.Config.SoundEnabled = data.SoundEnabled ~= nil and data.SoundEnabled or LogQuickLib.Config.SoundEnabled
+                LogQuickLib.Config.SoundVolume = data.SoundVolume or LogQuickLib.Config.SoundVolume
+                LogQuickLib.Config.SoundID = data.SoundID or LogQuickLib.Config.SoundID
+                LogQuickLib.Config.BgImage = data.BgImage or LogQuickLib.Config.BgImage
+                LogQuickLib.Config.BgOpacity = data.BgOpacity or LogQuickLib.Config.BgOpacity
+                LogQuickLib.Config.FloatingHUD = data.FloatingHUD ~= nil and data.FloatingHUD or LogQuickLib.Config.FloatingHUD
+                if data.Position then
+                    LogQuickLib.Config.Position = Vector2.new(data.Position[1], data.Position[2])
+                end
+            end
+        end)
+    end
+end
+
+loadConfig()
+
+-- 触发音效
+local function triggerSound()
+    if LogQuickLib.Config.SoundEnabled then
+        playSound(LogQuickLib.Config.SoundID, LogQuickLib.Config.SoundVolume)
+    end
+end
+
+-- 拖拽+屏幕锁定
+local function makeDraggable(gui, dragSpeed)
+    local dragging
+    local dragInput
+    local dragStart
+    local startPos
+
+    local function update(input)
+        local delta = input.Position - dragStart
+        local newX = startPos.X.Offset + delta.X
+        local newY = startPos.Y.Offset + delta.Y
+        
+        -- 屏幕限制，防止拖出屏幕外
+        local screenWidth = CoreGui.RobloxGui.AbsoluteSize.X
+        local screenHeight = CoreGui.RobloxGui.AbsoluteSize.Y
+        local uiWidth = gui.AbsoluteSize.X
+        local uiHeight = gui.AbsoluteSize.Y
+        
+        newX = math.clamp(newX, 0, screenWidth - uiWidth)
+        newY = math.clamp(newY, 0, screenHeight - uiHeight)
+
+        local tween = TweenService:Create(gui, TweenInfo.new(dragSpeed or 0.1), {Position = UDim2.new(0, newX, 0, newY)})
+        tween:Play()
+        LogQuickLib.Config.Position = Vector2.new(newX, newY)
+        saveConfig()
+    end
+
+    gui.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            dragging = true
+            dragStart = input.Position
+            startPos = gui.Position
+
+            input.Changed:Connect(function()
+                if input.UserInputState == Enum.UserInputState.End then
+                    dragging = false
+                end
+            end)
+        end
+    end)
+
+    gui.InputChanged:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
+            dragInput = input
+        end
+    end)
+
+    UserInputService.InputChanged:Connect(function(input)
+        if input == dragInput and dragging then
+            update(input)
+        end
+    end)
+end
+
+-- 获取顶级容器
+local function getUIContainer()
+    local containerName = "LogQuick_UI_Suite"
+    local found = CoreGui:FindFirstChild(containerName)
+    if found then found:Destroy() end
+    
+    local sGui = Instance.new("ScreenGui")
+    sGui.Name = containerName
+    sGui.ResetOnSpawn = false
+    sGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+    sGui.Parent = CoreGui
+    return sGui
+end
+
+local MainScreenGui = getUIContainer()
+
+-- 通知系统
+local NotificationLayout = Instance.new("Frame")
+NotificationLayout.Size = UDim2.new(0, 300, 1, -20)
+NotificationLayout.Position = UDim2.new(1, -310, 0, 10)
+NotificationLayout.BackgroundTransparency = 1
+NotificationLayout.Parent = MainScreenGui
+
+local UIList = Instance.new("UIListLayout")
+UIList.VerticalAlignment = Enum.VerticalAlignment.Bottom
+UIList.SortOrder = Enum.SortOrder.LayoutOrder
+UIList.Padding = UDim.new(0, 10)
+UIList.Parent = NotificationLayout
+
+function LogQuickLib:Notify(title, text, duration)
+    duration = duration or 4
+    local frame = Instance.new("Frame")
+    frame.Size = UDim2.new(1, 0, 0, 70)
+    frame.BackgroundColor3 = LogQuickLib.CurrentTheme.Background
+    frame.BorderSizePixel = 0
+    frame.BackgroundTransparency = 0.1
+    
+    local corner = Instance.new("UICorner")
+    corner.CornerRadius = UDim.new(0, 8)
+    corner.Parent = frame
+    
+    local stroke = Instance.new("UIStroke")
+    stroke.Thickness = 1.5
+    stroke.Color = LogQuickLib.CurrentTheme.Accent
+    stroke.Parent = frame
+
+    local tLabel = Instance.new("TextLabel")
+    tLabel.Size = UDim2.new(1, -20, 0, 25)
+    tLabel.Position = UDim2.new(0, 10, 0, 5)
+    tLabel.BackgroundTransparency = 1
+    tLabel.TextColor3 = LogQuickLib.CurrentTheme.Text
+    tLabel.Text = title
+    tLabel.Font = Enum.Font.SourceSansBold
+    tLabel.TextSize = 16
+    tLabel.TextXAlignment = Enum.TextXAlignment.Left
+    tLabel.Parent = frame
+
+    local dLabel = Instance.new("TextLabel")
+    dLabel.Size = UDim2.new(1, -20, 0, 30)
+    dLabel.Position = UDim2.new(0, 10, 0, 30)
+    dLabel.BackgroundTransparency = 1
+    dLabel.TextColor3 = LogQuickLib.CurrentTheme.TextMuted
+    dLabel.Text = text
+    dLabel.Font = Enum.Font.SourceSans
+    dLabel.TextSize = 14
+    dLabel.TextWrapped = true
+    dLabel.TextXAlignment = Enum.TextXAlignment.Left
+    dLabel.Parent = frame
+
+    frame.Parent = NotificationLayout
+    triggerSound()
+
+    -- 渐显
+    frame.Size = UDim2.new(1, 0, 0, 0)
+    TweenService:Create(frame, TweenInfo.new(0.3), {Size = UDim2.new(1, 0, 0, 70)}):Play()
+
+    task.delay(duration, function()
+        local t = TweenService:Create(frame, TweenInfo.new(0.3), {Size = UDim2.new(1, 0, 0, 0), BackgroundTransparency = 1})
+        t:Play()
+        t.Completed:Connect(function()
+            frame:Destroy()
+        end)
+    end)
+end
+
+-- 水印 (Watermark)
+local Watermark = {}
+function LogQuickLib:SetWatermark(text, enabled)
+    if self.WatermarkFrame then self.WatermarkFrame:Destroy() end
+    if not enabled then return end
+
+    local frame = Instance.new("Frame")
+    frame.Size = UDim2.new(0, 200, 0, 30)
+    frame.Position = UDim2.new(0, 10, 0, 10)
+    frame.BackgroundColor3 = Color3.fromRGB(20, 20, 25)
+    frame.BackgroundTransparency = 0.2
+    frame.Parent = MainScreenGui
+
+    local corner = Instance.new("UICorner")
+    corner.CornerRadius = UDim.new(0, 6)
+    corner.Parent = frame
+
+    local stroke = Instance.new("UIStroke")
+    stroke.Thickness = 1
+    stroke.Color = Color3.fromRGB(100, 110, 245)
+    stroke.Parent = frame
+
+    local label = Instance.new("TextLabel")
+    label.Size = UDim2.new(1, -10, 1, 0)
+    label.Position = UDim2.new(0, 10, 0, 0)
+    label.BackgroundTransparency = 1
+    label.TextColor3 = Color3.fromRGB(255, 255, 255)
+    label.Text = text
+    label.Font = Enum.Font.SourceSansBold
+    label.TextSize = 13
+    label.TextXAlignment = Enum.TextXAlignment.Left
+    label.Parent = frame
+
+    self.WatermarkFrame = frame
+end
+
+-- 悬浮HUD (FPS & Ping)
+local FloatingHUD = {}
+function LogQuickLib:InitFloatingHUD()
+    if self.HUDFrame then self.HUDFrame:Destroy() end
+    
+    local frame = Instance.new("Frame")
+    frame.Size = UDim2.new(0, 150, 0, 50)
+    frame.Position = UDim2.new(0.85, 0, 0.05, 0)
+    frame.BackgroundColor3 = Color3.fromRGB(15, 15, 20)
+    frame.BackgroundTransparency = 0.3
+    frame.Parent = MainScreenGui
+    
+    local corner = Instance.new("UICorner")
+    corner.CornerRadius = UDim.new(0, 8)
+    corner.Parent = frame
+    
+    local stroke = Instance.new("UIStroke")
+    stroke.Thickness = 1
+    stroke.Color = Color3.fromRGB(80, 80, 90)
+    stroke.Parent = frame
+
+    local textLabel = Instance.new("TextLabel")
+    textLabel.Size = UDim2.new(1, 0, 1, 0)
+    textLabel.BackgroundTransparency = 1
+    textLabel.TextColor3 = Color3.fromRGB(240, 240, 240)
+    textLabel.Font = Enum.Font.Code
+    textLabel.TextSize = 12
+    textLabel.Text = "FPS: --\nPING: -- ms"
+    textLabel.Parent = frame
+
+    makeDraggable(frame, 0.05)
+    self.HUDFrame = frame
+
+    -- 更新逻辑
+    local lastUpdate = 0
+    local fpsCount = 0
+    RunService.RenderStepped:Connect(function(dt)
+        if not self.Config.FloatingHUD then 
+            frame.Visible = false
+            return 
+        else
+            frame.Visible = true
+        end
+
+        fpsCount = fpsCount + 1
+        if tick() - lastUpdate >= 1 then
+            local ping = "N/A"
+            pcall(function()
+                ping = math.floor(game:GetService("Stats").Network.ServerConnection:GetPing() * 1000)
+            end)
+            textLabel.Text = string.format("FPS: %d\nPING: %s ms", fpsCount, tostring(ping))
+            fpsCount = 0
+            lastUpdate = tick()
+        end
+    end)
+end
+
+-- 密钥验证系统 (Key System)
+function LogQuickLib:ShowKeySystem(correctKey, onVerifySuccess)
+    local keyFrame = Instance.new("Frame")
+    keyFrame.Size = UDim2.new(0, 350, 0, 180)
+    keyFrame.Position = UDim2.new(0.5, -175, 0.4, -90)
+    keyFrame.BackgroundColor3 = Color3.fromRGB(20, 20, 25)
+    keyFrame.Parent = MainScreenGui
+
+    local corner = Instance.new("UICorner")
+    corner.CornerRadius = UDim.new(0, 10)
+    corner.Parent = keyFrame
+
+    local stroke = Instance.new("UIStroke")
+    stroke.Thickness = 1.5
+    stroke.Color = Color3.fromRGB(100, 110, 245)
+    stroke.Parent = keyFrame
+
+    local title = Instance.new("TextLabel")
+    title.Size = UDim2.new(1, 0, 0, 40)
+    title.BackgroundTransparency = 1
+    title.TextColor3 = Color3.fromRGB(255, 255, 255)
+    title.Text = "LOG_QUICK KEY SYSTEM"
+    title.Font = Enum.Font.SourceSansBold
+    title.TextSize = 18
+    title.Parent = keyFrame
+
+    local input = Instance.new("TextBox")
+    input.Size = UDim2.new(0.8, 0, 0, 35)
+    input.Position = UDim2.new(0.1, 0, 0.35, 0)
+    input.BackgroundColor3 = Color3.fromRGB(30, 30, 35)
+    input.TextColor3 = Color3.fromRGB(240, 240, 240)
+    input.PlaceholderText = "Enter Activation Key..."
+    input.PlaceholderColor3 = Color3.fromRGB(100, 100, 110)
+    input.Font = Enum.Font.SourceSans
+    input.TextSize = 14
+    input.Text = ""
+    input.Parent = keyFrame
+    
+    local inputCorner = Instance.new("UICorner")
+    inputCorner.CornerRadius = UDim.new(0, 6)
+    inputCorner.Parent = input
+
+    local verifyBtn = Instance.new("TextButton")
+    verifyBtn.Size = UDim2.new(0.4, 0, 0, 35)
+    verifyBtn.Position = UDim2.new(0.1, 0, 0.65, 10)
+    verifyBtn.BackgroundColor3 = Color3.fromRGB(100, 110, 245)
+    verifyBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    verifyBtn.Text = "Verify"
+    verifyBtn.Font = Enum.Font.SourceSansBold
+    verifyBtn.TextSize = 14
+    verifyBtn.Parent = keyFrame
+
+    local vCorner = Instance.new("UICorner")
+    vCorner.CornerRadius = UDim.new(0, 6)
+    vCorner.Parent = verifyBtn
+
+    local getBtn = Instance.new("TextButton")
+    getBtn.Size = UDim2.new(0.4, 0, 0, 35)
+    getBtn.Position = UDim2.new(0.5, 10, 0.65, 10)
+    getBtn.BackgroundColor3 = Color3.fromRGB(40, 40, 45)
+    getBtn.TextColor3 = Color3.fromRGB(200, 200, 200)
+    getBtn.Text = "Get Key"
+    getBtn.Font = Enum.Font.SourceSans
+    getBtn.TextSize = 14
+    getBtn.Parent = keyFrame
+
+    local gCorner = Instance.new("UICorner")
+    gCorner.CornerRadius = UDim.new(0, 6)
+    gCorner.Parent = getBtn
+
+    verifyBtn.MouseButton1Click:Connect(function()
+        if input.Text == correctKey then
+            keyFrame:Destroy()
+            onVerifySuccess()
+        else
+            input.Text = ""
+            input.PlaceholderText = "WRONG KEY! Try Again"
+            input.PlaceholderColor3 = Color3.fromRGB(220, 80, 80)
+        end
+    end)
+
+    getBtn.MouseButton1Click:Connect(function()
+        setclipboard("https://discord.gg/logquick")
+        LogQuickLib:Notify("Key System", "Link copied to clipboard! (MOCKED)", 3)
+    end)
+end
+
+-- ==================== 主窗口创建 ====================
+function LogQuickLib:CreateWindow(title, subtitle, script_author)
+    local Window = {
+        Tabs = {},
+        ActiveTab = nil,
+        ScriptAuthor = script_author or "Unknown"
+    }
+
+    -- 移动端检测
+    local isMobile = UserInputService.TouchEnabled
+    local defaultScale = isMobile and 1.15 or 1.0
+    self.Config.UI_Scale = defaultScale
+
+    -- 主框架
+    local mainFrame = Instance.new("Frame")
+    mainFrame.Size = UDim2.new(0, 650, 0, 420)
+    
+    -- 还原位置或居中
+    if self.Config.Position then
+        mainFrame.Position = UDim2.new(0, self.Config.Position.X, 0, self.Config.Position.Y)
+    else
+        mainFrame.Position = UDim2.new(0.5, -325, 0.4, -210)
+    end
+    
+    mainFrame.BackgroundColor3 = self.CurrentTheme.Background
+    mainFrame.BackgroundTransparency = self.Config.Transparency
+    mainFrame.BorderSizePixel = 0
+    mainFrame.ClipsDescendants = false
+    mainFrame.Parent = MainScreenGui
+
+    local mainCorner = Instance.new("UICorner")
+    mainCorner.CornerRadius = UDim.new(0, 10)
+    mainCorner.Parent = mainFrame
+
+    -- 边框设置
+    local stroke = Instance.new("UIStroke")
+    stroke.Thickness = self.Config.BorderSize
+    stroke.Color = self.CurrentTheme.Border
+    stroke.Parent = mainFrame
+
+    -- 边框特效(彩虹、呼吸等)
+    local bTime = 0
+    RunService.RenderStepped:Connect(function(dt)
+        bTime = bTime + dt
+        if self.Config.BorderMode == "Rainbow" then
+            stroke.Color = Color3.fromHSV((tick() % 5) / 5, 0.8, 1)
+        elseif self.Config.BorderMode == "Breathe" then
+            local amp = (math.sin(bTime * 3) + 1) / 2 -- 0 到 1 之间
+            stroke.Color = self.CurrentTheme.Accent:Lerp(self.CurrentTheme.Background, amp * 0.7)
+        else
+            stroke.Color = self.CurrentTheme.Border
+        end
+    end)
+
+    -- UI Scale
+    local uiScale = Instance.new("UIScale")
+    uiScale.Scale = self.Config.UI_Scale
+    uiScale.Parent = mainFrame
+
+    -- 背景图片
+    local bgImg = Instance.new("ImageLabel")
+    bgImg.Size = UDim2.new(1, 0, 1, 0)
+    bgImg.BackgroundTransparency = 1
+    bgImg.Image = self.Config.BgImage
+    bgImg.ImageOpacity = self.Config.BgOpacity
+    bgImg.Parent = mainFrame
+
+    -- 顶部标题栏
+    local titleBar = Instance.new("Frame")
+    titleBar.Size = UDim2.new(1, 0, 0, 50)
+    titleBar.BackgroundTransparency = 1
+    titleBar.Parent = mainFrame
+
+    local titleText = Instance.new("TextLabel")
+    titleText.Size = UDim2.new(0.7, 0, 0.6, 0)
+    titleText.Position = UDim2.new(0, 15, 0.1, 0)
+    titleText.BackgroundTransparency = 1
+    titleText.TextColor3 = self.CurrentTheme.Text
+    titleText.Text = title
+    titleText.Font = Enum.Font.SourceSansBold
+    titleText.TextSize = 20
+    titleText.TextXAlignment = Enum.TextXAlignment.Left
+    titleText.Parent = titleBar
+
+    local subTitleText = Instance.new("TextLabel")
+    subTitleText.Size = UDim2.new(0.7, 0, 0.3, 0)
+    subTitleText.Position = UDim2.new(0, 15, 0.65, 0)
+    subTitleText.BackgroundTransparency = 1
+    subTitleText.TextColor3 = self.CurrentTheme.TextMuted
+    subTitleText.Text = subtitle or "Log_quick UI Lib"
+    subTitleText.Font = Enum.Font.SourceSansItalic
+    subTitleText.TextSize = 12
+    subTitleText.TextXAlignment = Enum.TextXAlignment.Left
+    subTitleText.Parent = titleBar
+
+    -- 按钮组件(最小化 & 关闭)
+    local closeBtn = Instance.new("TextButton")
+    closeBtn.Size = UDim2.new(0, 30, 0, 30)
+    closeBtn.Position = UDim2.new(1, -40, 0.2, 0)
+    closeBtn.BackgroundColor3 = Color3.fromRGB(220, 80, 80)
+    closeBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    closeBtn.Text = "X"
+    closeBtn.Font = Enum.Font.SourceSansBold
+    closeBtn.TextSize = 14
+    closeBtn.Parent = titleBar
+    Instance.new("UICorner", closeBtn).CornerRadius = UDim.new(0, 6)
+
+    local isMinimized = false
+    local minBtn = Instance.new("TextButton")
+    minBtn.Size = UDim2.new(0, 30, 0, 30)
+    minBtn.Position = UDim2.new(1, -80, 0.2, 0)
+    minBtn.BackgroundColor3 = Color3.fromRGB(60, 60, 65)
+    minBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    minBtn.Text = "-"
+    minBtn.Font = Enum.Font.SourceSansBold
+    minBtn.TextSize = 16
+    minBtn.Parent = titleBar
+    Instance.new("UICorner", minBtn).CornerRadius = UDim.new(0, 6)
+
+    minBtn.MouseButton1Click:Connect(function()
+        triggerSound()
+        isMinimized = not isMinimized
+        if isMinimized then
+            TweenService:Create(mainFrame, TweenInfo.new(0.3), {Size = UDim2.new(0, 650, 0, 50)}):Play()
+        else
+            TweenService:Create(mainFrame, TweenInfo.new(0.3), {Size = UDim2.new(0, 650, 0, 420)}):Play()
+        end
+    end)
+
+    closeBtn.MouseButton1Click:Connect(function()
+        triggerSound()
+        MainScreenGui:Destroy()
+    end)
+
+    makeDraggable(mainFrame, 0.08)
+
+    -- 侧边栏(选项卡容器)
+    local sidebar = Instance.new("Frame")
+    sidebar.Size = UDim2.new(0, 160, 1, -50)
+    sidebar.Position = UDim2.new(0, 0, 0, 50)
+    sidebar.BackgroundColor3 = self.CurrentTheme.Sidebar
+    sidebar.BorderSizePixel = 0
+    sidebar.Parent = mainFrame
+
+    local sidebarCorner = Instance.new("UICorner")
+    sidebarCorner.CornerRadius = UDim.new(0, 10)
+    sidebarCorner.Parent = sidebar
+
+    local tabLayout = Instance.new("UIListLayout")
+    tabLayout.Padding = UDim.new(0, 5)
+    tabLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
+    tabLayout.Parent = sidebar
+
+    -- 内容区域
+    local contentArea = Instance.new("Frame")
+    contentArea.Size = UDim2.new(1, -170, 1, -60)
+    contentArea.Position = UDim2.new(0, 165, 0, 55)
+    contentArea.BackgroundTransparency = 1
+    contentArea.Parent = mainFrame
+
+    -- 加载特效(高级淡入)
+    mainFrame.Size = UDim2.new(0, 0, 0, 0)
+    mainFrame.BackgroundTransparency = 1
+    TweenService:Create(mainFrame, TweenInfo.new(0.5, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
+        Size = UDim2.new(0, 650, 0, 420),
+        BackgroundTransparency = self.Config.Transparency
+    }):Play()
+
+    -- 欢迎通知
+    LogQuickLib:Notify("Welcome", "Injected with " .. getExecutor() .. "!", 4)
+    self:InitFloatingHUD()
+
+    -- ==================== 选项卡系统 ====================
+    function Window:CreateTab(tabName, iconId)
+        local Tab = {
+            SubTabs = {},
+            ActiveSubTab = nil,
+            Frame = Instance.new("ScrollingFrame"),
+            Btn = Instance.new("TextButton"),
+            SubTabContainer = Instance.new("Frame"),
+            SubTabListLayout = nil
+        }
+
+        Tab.Frame.Size = UDim2.new(1, 0, 1, -30)
+        Tab.Frame.Position = UDim2.new(0, 0, 0, 30)
+        Tab.Frame.BackgroundTransparency = 1
+        Tab.Frame.CanvasSize = UDim2.new(0, 0, 0, 0)
+        Tab.Frame.ScrollBarThickness = 2
+        Tab.Frame.Visible = false
+        Tab.Frame.Parent = contentArea
+
+        local tList = Instance.new("UIListLayout")
+        tList.Padding = UDim.new(0, 8)
+        tList.HorizontalAlignment = Enum.HorizontalAlignment.Center
+        tList.Parent = Tab.Frame
+
+        -- 子标签容器
+        Tab.SubTabContainer.Size = UDim2.new(1, 0, 0, 30)
+        Tab.SubTabContainer.BackgroundTransparency = 1
+        Tab.SubTabContainer.Visible = false
+        Tab.SubTabContainer.Parent = contentArea
+
+        local subList = Instance.new("UIListLayout")
+        subList.FillDirection = Enum.FillDirection.Horizontal
+        subList.Padding = UDim.new(0, 8)
+        subList.Parent = Tab.SubTabContainer
+        Tab.SubTabListLayout = subList
+
+        -- 侧边栏按钮
+        Tab.Btn.Size = UDim2.new(0.9, 0, 0, 35)
+        Tab.Btn.BackgroundColor3 = LogQuickLib.CurrentTheme.Element
+        Tab.Btn.TextColor3 = LogQuickLib.CurrentTheme.TextMuted
+        Tab.Btn.Text = "  " .. tabName
+        Tab.Btn.Font = Enum.Font.SourceSansBold
+        Tab.Btn.TextSize = 14
+        Tab.Btn.TextXAlignment = Enum.TextXAlignment.Left
+        Tab.Btn.Parent = sidebar
+
+        local bCorner = Instance.new("UICorner")
+        bCorner.CornerRadius = UDim.new(0, 6)
+        bCorner.Parent = Tab.Btn
+
+        -- 如果有Icon图标
+        if iconId then
+            local icon = Instance.new("ImageLabel")
+            icon.Size = UDim2.new(0, 18, 0, 18)
+            icon.Position = UDim2.new(0, 5, 0.5, -9)
+            icon.BackgroundTransparency = 1
+            icon.Image = "rbxassetid://" .. tostring(iconId)
+            icon.Parent = Tab.Btn
+            Tab.Btn.Text = "     " .. tabName
+        end
+
+        local function showTab()
+            triggerSound()
+            for _, t in pairs(Window.Tabs) do
+                t.Frame.Visible = false
+                t.SubTabContainer.Visible = false
+                t.Btn.TextColor3 = LogQuickLib.CurrentTheme.TextMuted
+                t.Btn.BackgroundColor3 = LogQuickLib.CurrentTheme.Element
+            end
+            Tab.Frame.Visible = true
+            Tab.Btn.TextColor3 = LogQuickLib.CurrentTheme.Accent
+            Tab.Btn.BackgroundColor3 = LogQuickLib.CurrentTheme.Background
+
+            if #Tab.SubTabs > 0 then
+                Tab.SubTabContainer.Visible = true
+                if Tab.ActiveSubTab then
+                    Tab.ActiveSubTab.Frame.Visible = true
+                end
+            end
+        end
+
+        Tab.Btn.MouseButton1Click:Connect(showTab)
+        table.insert(Window.Tabs, Tab)
+
+        if #Window.Tabs == 1 then
+            showTab()
+        end
+
+        -- ==================== 子选项卡功能 (功能再分区) ====================
+        function Tab:CreateSubTab(subName)
+            local SubTab = {
+                Frame = Instance.new("ScrollingFrame"),
+                Btn = Instance.new("TextButton")
+            }
+
+            SubTab.Frame.Size = UDim2.new(1, 0, 1, -35)
+            SubTab.Frame.Position = UDim2.new(0, 0, 0, 35)
+            SubTab.Frame.BackgroundTransparency = 1
+            SubTab.Frame.CanvasSize = UDim2.new(0, 0, 0, 0)
+            SubTab.Frame.ScrollBarThickness = 2
+            SubTab.Frame.Visible = false
+            SubTab.Frame.Parent = contentArea
+
+            local sList = Instance.new("UIListLayout")
+            sList.Padding = UDim.new(0, 8)
+            sList.HorizontalAlignment = Enum.HorizontalAlignment.Center
+            sList.Parent = SubTab.Frame
+
+            -- 子栏按钮
+            SubTab.Btn.Size = UDim2.new(0, 100, 1, 0)
+            SubTab.Btn.BackgroundColor3 = LogQuickLib.CurrentTheme.Element
+            SubTab.Btn.TextColor3 = LogQuickLib.CurrentTheme.TextMuted
+            SubTab.Btn.Text = subName
+            SubTab.Btn.Font = Enum.Font.SourceSansBold
+            SubTab.Btn.TextSize = 12
+            SubTab.Btn.Parent = Tab.SubTabContainer
+            Instance.new("UICorner", SubTab.Btn).CornerRadius = UDim.new(0, 4)
+
+            local function showSubTab()
+                triggerSound()
+                for _, st in pairs(Tab.SubTabs) do
+                    st.Frame.Visible = false
+                    st.Btn.TextColor3 = LogQuickLib.CurrentTheme.TextMuted
+                    st.Btn.BackgroundColor3 = LogQuickLib.CurrentTheme.Element
+                end
+                Tab.Frame.Visible = false -- 隐藏父级空白内容，显示子菜单
+                SubTab.Frame.Visible = true
+                SubTab.Btn.TextColor3 = LogQuickLib.CurrentTheme.Accent
+                SubTab.Btn.BackgroundColor3 = LogQuickLib.CurrentTheme.Background
+                Tab.ActiveSubTab = SubTab
+            end
+
+            SubTab.Btn.MouseButton1Click:Connect(showSubTab)
+            table.insert(Tab.SubTabs, SubTab)
+
+            -- 默认选中第一个
+            if #Tab.SubTabs == 1 then
+                Tab.SubTabContainer.Visible = true
+                showSubTab()
+            end
+
+            -- 注入API生成组件到子页面
+            LogQuickLib:InjectAPI(SubTab)
+            return SubTab
+        end
+
+        -- 注入API生成组件到主Tab
+        LogQuickLib:InjectAPI(Tab)
+        return Tab
+    end
+
+    -- ==================== 内置设置面板 ====================
+    local SettingsTab = Window:CreateTab("UI Settings", 6031289233)
+    local developerSec = SettingsTab:CreateSection("Script Info")
+    
+    -- 作者标注(不允许被删改)
+    developerSec:CreateLabel("UI Designer: Log_quick")
+    developerSec:CreateLabel("Script Developer: " .. Window.ScriptAuthor)
+
+    local customSec = SettingsTab:CreateSection("Customization")
+    customSec:CreateSlider("UI Transparency", 0, 1, self.Config.Transparency, function(val)
+        self.Config.Transparency = val
+        mainFrame.BackgroundTransparency = val
+        saveConfig()
+    end)
+
+    customSec:CreateDropdown("Border Mode", {"Solid", "Rainbow", "Breathe"}, self.Config.BorderMode, function(mode)
+        self.Config.BorderMode = mode
+        saveConfig()
+    end)
+
+    customSec:CreateToggle("Sound Effects", self.Config.SoundEnabled, function(bool)
+        self.Config.SoundEnabled = bool
+        saveConfig()
+    end)
+
+    customSec:CreateToggle("Floating Performance HUD", self.Config.FloatingHUD, function(bool)
+        self.Config.FloatingHUD = bool
+        saveConfig()
+    end)
+
+    -- 主题设置
+    local themeSec = SettingsTab:CreateSection("Theme Styles")
+    themeSec:CreateDropdown("Global Theme", {"Dark", "Light"}, self.Config.Theme, function(theme)
+        self.Config.Theme = theme
+        if theme == "Dark" then
+            self.CurrentTheme = self.Themes.Dark
+        else
+            self.CurrentTheme = self.Themes.Light
+        end
+        mainFrame.BackgroundColor3 = self.CurrentTheme.Background
+        sidebar.BackgroundColor3 = self.CurrentTheme.Sidebar
+        saveConfig()
+    end)
+
+    -- 背景设置
+    local bgSec = SettingsTab:CreateSection("Custom Background")
+    bgSec:CreateInput("Background ID (AssetID)", "rbxassetid://", function(txt)
+        self.Config.BgImage = txt
+        bgImg.Image = txt
+        saveConfig()
+    end)
+
+    bgSec:CreateSlider("Background Opacity", 0, 1, self.Config.BgOpacity, function(val)
+        self.Config.BgOpacity = val
+        bgImg.ImageOpacity = val
+        saveConfig()
+    end)
+
+    return Window
+end
+
+-- ==================== 各组件API注入逻辑 ====================
+function LogQuickLib:InjectAPI(TabOrSubTab)
+    local ParentFrame = TabOrSubTab.Frame
+
+    -- 监听CanvasSize
+    local function adjustCanvasSize()
+        local height = 0
+        for _, child in pairs(ParentFrame:GetChildren()) do
+            if child:IsA("Frame") or child:IsA("TextLabel") then
+                height = height + child.Size.Y.Offset + 8
+            end
+        end
+        ParentFrame.CanvasSize = UDim2.new(0, 0, 0, height + 20)
+    end
+
+    -- 1. 创建标题分区
+    function TabOrSubTab:CreateSection(secName)
+        local Section = {}
+        local sFrame = Instance.new("Frame")
+        sFrame.Size = UDim2.new(0.95, 0, 0, 30)
+        sFrame.BackgroundTransparency = 1
+        sFrame.Parent = ParentFrame
+
+        local label = Instance.new("TextLabel")
+        label.Size = UDim2.new(1, 0, 1, 0)
+        label.BackgroundTransparency = 1
+        label.TextColor3 = LogQuickLib.CurrentTheme.Accent
+        label.Text = secName:upper()
+        label.Font = Enum.Font.SourceSansBold
+        label.TextSize = 13
+        label.TextXAlignment = Enum.TextXAlignment.Left
+        label.Parent = sFrame
+
+        adjustCanvasSize()
+
+        -- 注入组件到该Section (其实也是排列在主滚动页面内)
+        LogQuickLib:InjectAPI(Section)
+        Section.Frame = ParentFrame
+        return Section
+    end
+
+    -- 2. 文本标签
+    function TabOrSubTab:CreateLabel(text)
+        local label = Instance.new("TextLabel")
+        label.Size = UDim2.new(0.95, 0, 0, 25)
+        label.BackgroundTransparency = 1
+        label.TextColor3 = LogQuickLib.CurrentTheme.Text
+        label.Text = text
+        label.Font = Enum.Font.SourceSans
+        label.TextSize = 14
+        label.TextXAlignment = Enum.TextXAlignment.Left
+        label.Parent = ParentFrame
+
+        adjustCanvasSize()
+        
+        local updater = {}
+        function updater:SetText(newTxt)
+            label.Text = newTxt
+        end
+        return updater
+    end
+
+    -- 3. 按钮
+    function TabOrSubTab:CreateButton(name, callback)
+        local btnFrame = Instance.new("Frame")
+        btnFrame.Size = UDim2.new(0.95, 0, 0, 38)
+        btnFrame.BackgroundColor3 = LogQuickLib.CurrentTheme.Element
+        btnFrame.Parent = ParentFrame
+
+        local corner = Instance.new("UICorner")
+        corner.CornerRadius = UDim.new(0, 6)
+        corner.Parent = btnFrame
+
+        local btn = Instance.new("TextButton")
+        btn.Size = UDim2.new(1, 0, 1, 0)
+        btn.BackgroundTransparency = 1
+        btn.TextColor3 = LogQuickLib.CurrentTheme.Text
+        btn.Text = "   " .. name
+        btn.Font = Enum.Font.SourceSansBold
+        btn.TextSize = 14
+        btn.TextXAlignment = Enum.TextXAlignment.Left
+        btn.Parent = btnFrame
+
+        btn.MouseButton1Down:Connect(function()
+            triggerSound()
+            TweenService:Create(btnFrame, TweenInfo.new(0.1), {BackgroundColor3 = LogQuickLib.CurrentTheme.Accent}):Play()
+        end)
+
+        btn.MouseButton1Up:Connect(function()
+            TweenService:Create(btnFrame, TweenInfo.new(0.1), {BackgroundColor3 = LogQuickLib.CurrentTheme.Element}):Play()
+            callback()
+        end)
+
+        adjustCanvasSize()
+    end
+
+    -- 4. 开关
+    function TabOrSubTab:CreateToggle(name, default, callback)
+        local state = default or false
+        local toggleFrame = Instance.new("Frame")
+        toggleFrame.Size = UDim2.new(0.95, 0, 0, 38)
+        toggleFrame.BackgroundColor3 = LogQuickLib.CurrentTheme.Element
+        toggleFrame.Parent = ParentFrame
+
+        Instance.new("UICorner", toggleFrame).CornerRadius = UDim.new(0, 6)
+
+        local label = Instance.new("TextLabel")
+        label.Size = UDim2.new(0.7, 0, 1, 0)
+        label.Position = UDim2.new(0, 10, 0, 0)
+        label.BackgroundTransparency = 1
+        label.TextColor3 = LogQuickLib.CurrentTheme.Text
+        label.Text = name
+        label.Font = Enum.Font.SourceSansBold
+        label.TextSize = 14
+        label.TextXAlignment = Enum.TextXAlignment.Left
+        label.Parent = toggleFrame
+
+        local box = Instance.new("Frame")
+        box.Size = UDim2.new(0, 40, 0, 20)
+        box.Position = UDim2.new(1, -50, 0.5, -10)
+        box.BackgroundColor3 = state and LogQuickLib.CurrentTheme.Accent or Color3.fromRGB(60, 60, 65)
+        box.Parent = toggleFrame
+        Instance.new("UICorner", box).CornerRadius = UDim.new(1, 0)
+
+        local dot = Instance.new("Frame")
+        dot.Size = UDim2.new(0, 16, 0, 16)
+        dot.Position = state and UDim2.new(1, -18, 0.5, -8) or UDim2.new(0, 2, 0.5, -8)
+        dot.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+        dot.Parent = box
+        Instance.new("UICorner", dot).CornerRadius = UDim.new(1, 0)
+
+        local clickBtn = Instance.new("TextButton")
+        clickBtn.Size = UDim2.new(1, 0, 1, 0)
+        clickBtn.BackgroundTransparency = 1
+        clickBtn.Text = ""
+        clickBtn.Parent = toggleFrame
+
+        clickBtn.MouseButton1Click:Connect(function()
+            triggerSound()
+            state = not state
+            local boxColor = state and LogQuickLib.CurrentTheme.Accent or Color3.fromRGB(60, 60, 65)
+            local dotPos = state and UDim2.new(1, -18, 0.5, -8) or UDim2.new(0, 2, 0.5, -8)
+            
+            TweenService:Create(box, TweenInfo.new(0.2), {BackgroundColor3 = boxColor}):Play()
+            TweenService:Create(dot, TweenInfo.new(0.2), {Position = dotPos}):Play()
+            
+            callback(state)
+        end)
+
+        adjustCanvasSize()
+        
+        local updater = {}
+        function updater:SetState(newState)
+            state = newState
+            local boxColor = state and LogQuickLib.CurrentTheme.Accent or Color3.fromRGB(60, 60, 65)
+            local dotPos = state and UDim2.new(1, -18, 0.5, -8) or UDim2.new(0, 2, 0.5, -8)
+            box.BackgroundColor3 = boxColor
+            dot.Position = dotPos
+            callback(state)
+        end
+        return updater
+    end
+
+    -- 5. 滑块
+    function TabOrSubTab:CreateSlider(name, min, max, default, callback)
+        local val = default or min
+        local sFrame = Instance.new("Frame")
+        sFrame.Size = UDim2.new(0.95, 0, 0, 50)
+        sFrame.BackgroundColor3 = LogQuickLib.CurrentTheme.Element
+        sFrame.Parent = ParentFrame
+        Instance.new("UICorner", sFrame).CornerRadius = UDim.new(0, 6)
+
+        local label = Instance.new("TextLabel")
+        label.Size = UDim2.new(0.6, 0, 0, 25)
+        label.Position = UDim2.new(0, 10, 0, 2)
+        label.BackgroundTransparency = 1
+        label.TextColor3 = LogQuickLib.CurrentTheme.Text
+        label.Text = name
+        label.Font = Enum.Font.SourceSansBold
+        label.TextSize = 14
+        label.TextXAlignment = Enum.TextXAlignment.Left
+        label.Parent = sFrame
+
+        local valLabel = Instance.new("TextLabel")
+        valLabel.Size = UDim2.new(0.3, 0, 0, 25)
+        valLabel.Position = UDim2.new(0.7, -10, 0, 2)
+        valLabel.BackgroundTransparency = 1
+        valLabel.TextColor3 = LogQuickLib.CurrentTheme.TextMuted
+        valLabel.Text = tostring(math.round(val * 100) / 100)
+        valLabel.Font = Enum.Font.Code
+        valLabel.TextSize = 13
+        valLabel.TextXAlignment = Enum.TextXAlignment.Right
+        valLabel.Parent = sFrame
+
+        local sliderBar = Instance.new("Frame")
+        sliderBar.Size = UDim2.new(0.9, 0, 0, 6)
+        sliderBar.Position = UDim2.new(0.05, 0, 0.7, 0)
+        sliderBar.BackgroundColor3 = Color3.fromRGB(50, 50, 55)
+        sliderBar.Parent = sFrame
+        Instance.new("UICorner", sliderBar).CornerRadius = UDim.new(1, 0)
+
+        local sliderFill = Instance.new("Frame")
+        local percent = (val - min) / (max - min)
+        sliderFill.Size = UDim2.new(percent, 0, 1, 0)
+        sliderFill.BackgroundColor3 = LogQuickLib.CurrentTheme.Accent
+        sliderFill.Parent = sliderBar
+        Instance.new("UICorner", sliderFill).CornerRadius = UDim.new(1, 0)
+
+        local function move(input)
+            local xOffset = math.clamp(input.Position.X - sliderBar.AbsolutePosition.X, 0, sliderBar.AbsoluteSize.X)
+            local rawVal = min + (xOffset / sliderBar.AbsoluteSize.X) * (max - min)
+            val = math.round(rawVal * 100) / 100
+            valLabel.Text = tostring(val)
+            sliderFill.Size = UDim2.new(xOffset / sliderBar.AbsoluteSize.X, 0, 1, 0)
+            callback(val)
+        end
+
+        local active = false
+        sliderBar.InputBegan:Connect(function(input)
+            if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+                active = true
+                move(input)
+            end
+        end)
+
+        UserInputService.InputEnded:Connect(function(input)
+            if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+                active = false
+            end
+        end)
+
+        UserInputService.InputChanged:Connect(function(input)
+            if active and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+                move(input)
+            end
+        end)
+
+        adjustCanvasSize()
+    end
+
+    -- 6. 下拉菜单 (Dropdown)
+    function TabOrSubTab:CreateDropdown(name, list, default, callback)
+        local active = false
+        local selected = default or list[1]
+        local dFrame = Instance.new("Frame")
+        dFrame.Size = UDim2.new(0.95, 0, 0, 38)
+        dFrame.BackgroundColor3 = LogQuickLib.CurrentTheme.Element
+        dFrame.ClipsDescendants = true
+        dFrame.Parent = ParentFrame
+        Instance.new("UICorner", dFrame).CornerRadius = UDim.new(0, 6)
+
+        local label = Instance.new("TextLabel")
+        label.Size = UDim2.new(0.6, 0, 0, 38)
+        label.Position = UDim2.new(0, 10, 0, 0)
+        label.BackgroundTransparency = 1
+        label.TextColor3 = LogQuickLib.CurrentTheme.Text
+        label.Text = name .. " (" .. selected .. ")"
+        label.Font = Enum.Font.SourceSansBold
+        label.TextSize = 14
+        label.TextXAlignment = Enum.TextXAlignment.Left
+        label.Parent = dFrame
+
+        local arrow = Instance.new("TextLabel")
+        arrow.Size = UDim2.new(0, 30, 0, 38)
+        arrow.Position = UDim2.new(1, -40, 0, 0)
+        arrow.BackgroundTransparency = 1
+        arrow.TextColor3 = LogQuickLib.CurrentTheme.TextMuted
+        arrow.Text = "V"
+        arrow.Font = Enum.Font.SourceSansBold
+        arrow.TextSize = 12
+        arrow.Parent = dFrame
+
+        local container = Instance.new("Frame")
+        container.Size = UDim2.new(1, -20, 0, 0)
+        container.Position = UDim2.new(0, 10, 0, 38)
+        container.BackgroundTransparency = 1
+        container.Parent = dFrame
+
+        local cList = Instance.new("UIListLayout")
+        cList.Padding = UDim.new(0, 4)
+        cList.Parent = container
+
+        for _, item in pairs(list) do
+            local itemBtn = Instance.new("TextButton")
+            itemBtn.Size = UDim2.new(1, 0, 0, 30)
+            itemBtn.BackgroundColor3 = Color3.fromRGB(50, 50, 55)
+            itemBtn.TextColor3 = LogQuickLib.CurrentTheme.Text
+            itemBtn.Text = item
+            itemBtn.Font = Enum.Font.SourceSans
+            itemBtn.TextSize = 13
+            itemBtn.Parent = container
+            Instance.new("UICorner", itemBtn).CornerRadius = UDim.new(0, 4)
+
+            itemBtn.MouseButton1Click:Connect(function()
+                triggerSound()
+                selected = item
+                label.Text = name .. " (" .. selected .. ")"
+                active = false
+                TweenService:Create(dFrame, TweenInfo.new(0.2), {Size = UDim2.new(0.95, 0, 0, 38)}):Play()
+                adjustCanvasSize()
+                callback(selected)
+            end)
+        end
+
+        local clickBtn = Instance.new("TextButton")
+        clickBtn.Size = UDim2.new(1, 0, 0, 38)
+        clickBtn.BackgroundTransparency = 1
+        clickBtn.Text = ""
+        clickBtn.Parent = dFrame
+
+        clickBtn.MouseButton1Click:Connect(function()
+            triggerSound()
+            active = not active
+            if active then
+                local contentHeight = #list * 34 + 48
+                TweenService:Create(dFrame, TweenInfo.new(0.2), {Size = UDim2.new(0.95, 0, 0, contentHeight)}):Play()
+            else
+                TweenService:Create(dFrame, TweenInfo.new(0.2), {Size = UDim2.new(0.95, 0, 0, 38)}):Play()
+            end
+            task.wait(0.2)
+            adjustCanvasSize()
+        end)
+
+        adjustCanvasSize()
+    end
+
+    -- 7. 输入框 (Input)
+    function TabOrSubTab:CreateInput(name, placeholder, callback)
+        local iFrame = Instance.new("Frame")
+        iFrame.Size = UDim2.new(0.95, 0, 0, 38)
+        iFrame.BackgroundColor3 = LogQuickLib.CurrentTheme.Element
+        iFrame.Parent = ParentFrame
+        Instance.new("UICorner", iFrame).CornerRadius = UDim.new(0, 6)
+
+        local label = Instance.new("TextLabel")
+        label.Size = UDim2.new(0.5, 0, 1, 0)
+        label.Position = UDim2.new(0, 10, 0, 0)
+        label.BackgroundTransparency = 1
+        label.TextColor3 = LogQuickLib.CurrentTheme.Text
+        label.Text = name
+        label.Font = Enum.Font.SourceSansBold
+        label.TextSize = 14
+        label.TextXAlignment = Enum.TextXAlignment.Left
+        label.Parent = iFrame
+
+        local box = Instance.new("TextBox")
+        box.Size = UDim2.new(0.4, 0, 0.7, 0)
+        box.Position = UDim2.new(0.6, -10, 0.15, 0)
+        box.BackgroundColor3 = Color3.fromRGB(50, 50, 55)
+        box.TextColor3 = LogQuickLib.CurrentTheme.Text
+        box.PlaceholderText = placeholder
+        box.PlaceholderColor3 = LogQuickLib.CurrentTheme.TextMuted
+        box.Font = Enum.Font.SourceSans
+        box.TextSize = 13
+        box.Text = ""
+        box.Parent = iFrame
+        Instance.new("UICorner", box).CornerRadius = UDim.new(0, 4)
+
+        box.FocusLost:Connect(function(enterPressed)
+            callback(box.Text)
+        end)
+
+        adjustCanvasSize()
+    end
+
+    -- 8. 按键绑定 (Keybind)
+    function TabOrSubTab:CreateKeybind(name, default, callback)
+        local currentBind = default or Enum.KeyCode.F
+        local kFrame = Instance.new("Frame")
+        kFrame.Size = UDim2.new(0.95, 0, 0, 38)
+        kFrame.BackgroundColor3 = LogQuickLib.CurrentTheme.Element
+        kFrame.Parent = ParentFrame
+        Instance.new("UICorner", kFrame).CornerRadius = UDim.new(0, 6)
+
+        local label = Instance.new("TextLabel")
+        label.Size = UDim2.new(0.6, 0, 1, 0)
+        label.Position = UDim2.new(0, 10, 0, 0)
+        label.BackgroundTransparency = 1
+        label.TextColor3 = LogQuickLib.CurrentTheme.Text
+        label.Text = name
+        label.Font = Enum.Font.SourceSansBold
+        label.TextSize = 14
+        label.TextXAlignment = Enum.TextXAlignment.Left
+        label.Parent = kFrame
+
+        local btn = Instance.new("TextButton")
+        btn.Size = UDim2.new(0, 80, 0, 24)
+        btn.Position = UDim2.new(1, -90, 0.5, -12)
+        btn.BackgroundColor3 = LogQuickLib.CurrentTheme.Accent
+        btn.TextColor3 = Color3.fromRGB(255, 255, 255)
+        btn.Text = currentBind.Name
+        btn.Font = Enum.Font.SourceSansBold
+        btn.TextSize = 12
+        btn.Parent = kFrame
+        Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 4)
+
+        local waiting = false
+        btn.MouseButton1Click:Connect(function()
+            waiting = true
+            btn.Text = "..."
+        end)
+
+        UserInputService.InputBegan:Connect(function(input)
+            if waiting and input.UserInputType == Enum.UserInputType.Keyboard then
+                currentBind = input.KeyCode
+                btn.Text = currentBind.Name
+                waiting = false
+                callback(currentBind)
+            end
+        end)
+
+        adjustCanvasSize()
+    end
+
+    -- 9. 状态显示器 (Status Display)
+    function TabOrSubTab:CreateStatus(name, defaultStatus)
+        local sFrame = Instance.new("Frame")
+        sFrame.Size = UDim2.new(0.95, 0, 0, 38)
+        sFrame.BackgroundColor3 = LogQuickLib.CurrentTheme.Element
+        sFrame.Parent = ParentFrame
+        Instance.new("UICorner", sFrame).CornerRadius = UDim.new(0, 6)
+
+        local label = Instance.new("TextLabel")
+        label.Size = UDim2.new(0.5, 0, 1, 0)
+        label.Position = UDim2.new(0, 10, 0, 0)
+        label.BackgroundTransparency = 1
+        label.TextColor3 = LogQuickLib.CurrentTheme.Text
+        label.Text = name
+        label.Font = Enum.Font.SourceSansBold
+        label.TextSize = 14
+        label.TextXAlignment = Enum.TextXAlignment.Left
+        label.Parent = sFrame
+
+        local sLabel = Instance.new("TextLabel")
+        sLabel.Size = UDim2.new(0.4, 0, 1, 0)
+        sLabel.Position = UDim2.new(0.6, -10, 0, 0)
+        sLabel.BackgroundTransparency = 1
+        sLabel.TextColor3 = LogQuickLib.CurrentTheme.Accent
+        sLabel.Text = defaultStatus or "Inactive"
+        sLabel.Font = Enum.Font.SourceSansBold
+        sLabel.TextSize = 14
+        sLabel.TextXAlignment = Enum.TextXAlignment.Right
+        sLabel.Parent = sFrame
+
+        adjustCanvasSize()
+
+        local handler = {}
+        function handler:SetStatus(newStat, color)
+            sLabel.Text = newStat
+            if color then sLabel.TextColor3 = color end
+        end
+        return handler
+    end
+
+    -- 10. 玩家选择器
+    function TabOrSubTab:CreatePlayerSelector(callback)
+        local function getPlayerList()
+            local list = {}
+            for _, p in pairs(Players:GetPlayers()) do
+                table.insert(list, p.Name)
+            end
+            return list
+        end
+
+        local selector = self:CreateDropdown("Select Player", getPlayerList(), LocalPlayer.Name, function(selected)
+            callback(Players:FindFirstChild(selected))
+        end)
+
+        Players.PlayerAdded:Connect(function()
+            -- 这里只是简单的动态更新
+        end)
+    end
+
+    -- 11. HSV色盘(三滑块集合型)
+    function TabOrSubTab:CreateColorPicker(name, defaultColor, callback)
+        local h, s, v = defaultColor:ToHSV()
+        local pickerFrame = Instance.new("Frame")
+        pickerFrame.Size = UDim2.new(0.95, 0, 0, 130)
+        pickerFrame.BackgroundColor3 = LogQuickLib.CurrentTheme.Element
+        pickerFrame.Parent = ParentFrame
+        Instance.new("UICorner", pickerFrame).CornerRadius = UDim.new(0, 6)
+
+        local label = Instance.new("TextLabel")
+        label.Size = UDim2.new(0.5, 0, 0, 25)
+        label.Position = UDim2.new(0, 10, 0, 5)
+        label.BackgroundTransparency = 1
+        label.TextColor3 = LogQuickLib.CurrentTheme.Text
+        label.Text = name
+        label.Font = Enum.Font.SourceSansBold
+        label.TextSize = 14
+        label.TextXAlignment = Enum.TextXAlignment.Left
+        label.Parent = pickerFrame
+
+        local preview = Instance.new("Frame")
+        preview.Size = UDim2.new(0, 30, 0, 20)
+        preview.Position = UDim2.new(1, -40, 0, 5)
+        preview.BackgroundColor3 = defaultColor
+        preview.Parent = pickerFrame
+        Instance.new("UICorner", preview).CornerRadius = UDim.new(0, 4)
+
+        local function updateColor()
+            local col = Color3.fromHSV(h, s, v)
+            preview.BackgroundColor3 = col
+            callback(col)
+        end
+
+        -- 生成内部三个简易滑动条(H, S, V)
+        local hSlider = Instance.new("Frame")
+        hSlider.Size = UDim2.new(0.9, 0, 0, 20)
+        hSlider.Position = UDim2.new(0.05, 0, 0.25, 10)
+        hSlider.BackgroundTransparency = 1
+        hSlider.Parent = pickerFrame
+        
+        -- H条
+        self:InjectAPI({Frame = hSlider})
+        hSlider:CreateSlider("H (色相)", 0, 1, h, function(val)
+            h = val; updateColor()
+        end)
+
+        local sSlider = Instance.new("Frame")
+        sSlider.Size = UDim2.new(0.9, 0, 0, 20)
+        sSlider.Position = UDim2.new(0.05, 0, 0.45, 15)
+        sSlider.BackgroundTransparency = 1
+        sSlider.Parent = pickerFrame
+        self:InjectAPI({Frame = sSlider})
+        sSlider:CreateSlider("S (饱和度)", 0, 1, s, function(val)
+            s = val; updateColor()
+        end)
+
+        local vSlider = Instance.new("Frame")
+        vSlider.Size = UDim2.new(0.9, 0, 0, 20)
+        vSlider.Position = UDim2.new(0.05, 0, 0.65, 20)
+        vSlider.BackgroundTransparency = 1
+        vSlider.Parent = pickerFrame
+        self:InjectAPI({Frame = vSlider})
+        vSlider:CreateSlider("V (亮度)", 0, 1, v, function(val)
+            v = val; updateColor()
+        end)
+
+        adjustCanvasSize()
+    end
+
+    -- 12. 搜索框(需要开发者自己提供过滤逻辑)
+    function TabOrSubTab:CreateSearchBar(placeholder, callback)
+        local sFrame = Instance.new("Frame")
+        sFrame.Size = UDim2.new(0.95, 0, 0, 38)
+        sFrame.BackgroundColor3 = LogQuickLib.CurrentTheme.Element
+        sFrame.Parent = ParentFrame
+        Instance.new("UICorner", sFrame).CornerRadius = UDim.new(0, 6)
+
+        local box = Instance.new("TextBox")
+        box.Size = UDim2.new(0.95, 0, 0.8, 0)
+        box.Position = UDim2.new(0.025, 0, 0.1, 0)
+        box.BackgroundTransparency = 1
+        box.TextColor3 = LogQuickLib.CurrentTheme.Text
+        box.PlaceholderText = placeholder or "Search features..."
+        box.PlaceholderColor3 = LogQuickLib.CurrentTheme.TextMuted
+        box.Font = Enum.Font.SourceSans
+        box.TextSize = 14
+        box.Text = ""
+        box.Parent = sFrame
+
+        box:GetPropertyChangedSignal("Text"):Connect(function()
+            callback(box.Text)
+        end)
+
+        adjustCanvasSize()
+    end
+
+    -- 13. 图片/图标显示
+    function TabOrSubTab:CreateImageDisplay(imageId, sizeY)
+        local img = Instance.new("ImageLabel")
+        img.Size = UDim2.new(0.95, 0, 0, sizeY or 100)
+        img.BackgroundTransparency = 1
+        img.Image = "rbxassetid://" .. tostring(imageId):gsub("rbxassetid://", "")
+        img.ScaleType = Enum.ScaleType.Fit
+        img.Parent = ParentFrame
+
+        adjustCanvasSize()
+    end
+end
+
+return LogQuickLib
