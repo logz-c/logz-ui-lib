@@ -1,18 +1,18 @@
 --[[
     ================================================================================
-    LogQuick_UI_Lib.lua
+    LogQuick_UI_Lib.lua (Completely Redesigned & Re-Engineered v3.5)
     ================================================================================
     Roblox 注入器通用单文件高级 UI 框架库
-    
     作者: Log_quick (不可更改)
-    支持: 手机端 (触屏自适应与触控响应) / 电脑端 (固定标准高分辨率尺寸)
-    风格: 现代极简流线玻璃质感、炫彩发光边框、高级开屏 Splash 载入动画、全清脆声效
     
-    【核心接口清单】
-    - 窗口与设置: CreateWindow, SetTitle, BuildSettingsTab, SaveConfig, LoadConfig, SetBackground, SetScriptAuthor
-    - 功能再分区: AddTab -> AddSection -> AddSubSection
-    - 核心 UI 控件: AddButton, AddToggle, AddSlider, AddHSVPicker, AddDropdown, AddInput, AddKeybind, AddLabel, AddPlayerSelector, AddImage, AddStatus
-    - 高级拓展工具: Notify (通知), CreateSearch (关键字搜索), CreateKeySystem (卡密验证), ToggleStats (FPS/Ping悬浮窗), SetWatermark (水印挂件)
+    重点修复与重构机制:
+    1. 采用 Roblox 引擎原生 AutomaticSize = Enum.AutomaticSize.Y 自动伸缩布局，
+       彻底解决布局重叠、高度为 0 导致的菜单不显示/控件不可见问题！
+    2. 优化 Tab 激活机制，确保用户添加的功能 Tab 默认高亮且页面正常渲染。
+    3. 优化控件搜索过滤逻辑，清空搜索框时可 100% 恢复所有菜单控件显示。
+    4. 手机端与电脑端双端智能自适应 (Mobile Touch Adaptive Layout)。
+    5. 内置 UI 设置面板 (Config 持久化, 透明度, 呼吸/彩虹/脉冲发光边框, 预设与HSV主题, 音效, 独立脚本作者署名)。
+    6. 完整 15+ 种核心与拓展 API 接口 (Button, Toggle, Slider, ColorPicker, Dropdown, Input, Keybind, Label, PlayerSelector, Image, Status, Search, KeySystem, Stats, Watermark, Notify)。
     ================================================================================
 ]]
 
@@ -20,7 +20,7 @@ local LogQuickUI = {}
 local Library = LogQuickUI
 
 -- ============================================================
--- [1] Services & Environment Compatibility Layer
+-- [1] Services & Environment Compatibility
 -- ============================================================
 local Players = game:GetService("Players")
 local UserInputService = game:GetService("UserInputService")
@@ -34,7 +34,7 @@ local CoreGui = game:GetService("CoreGui")
 local LocalPlayer = Players.LocalPlayer
 local PlayerGui = LocalPlayer and LocalPlayer:WaitForChild("PlayerGui", 10)
 
--- 挂载节点判定 (gethui > RobloxGui > CoreGui > PlayerGui)
+-- 安全挂载节点 (gethui > RobloxGui > CoreGui > PlayerGui)
 local TargetParent = nil
 if gethui then
     TargetParent = gethui()
@@ -46,7 +46,7 @@ else
     TargetParent = PlayerGui
 end
 
--- 识别注入器/执行器名称
+-- 智能识别注入器环境
 local function GetExecutorName()
     if identifyexecutor then
         local name, version = identifyexecutor()
@@ -66,7 +66,7 @@ local function GetExecutorName()
     return "通用注入器 (Executor)"
 end
 
--- 设备检测与自适应（手机端自适应放大触控域，电脑端保持标准 fixed 布局）
+-- 设备判定与自适应尺寸
 local IsMobile = UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled
 if not IsMobile and UserInputService.TouchEnabled then
     IsMobile = true
@@ -77,7 +77,7 @@ local FontBaseSize = IsMobile and 15 or 13
 local HeaderFontSize = IsMobile and 17 or 15
 
 -- ============================================================
--- [2] Theme Palette System
+-- [2] Theme Palette Manager
 -- ============================================================
 local Themes = {
     Dark = {
@@ -169,7 +169,7 @@ local Themes = {
 local ThemeColors = Themes.Dark
 
 -- ============================================================
--- [3] Config Storage (JSON Serialization)
+-- [3] Config Storage & Persistence
 -- ============================================================
 local ConfigFolder = "LogQuickStorage"
 local ConfigFile = ConfigFolder .. "/LogQuickUI_Config.json"
@@ -254,7 +254,7 @@ end
 
 LoadConfig()
 
--- 拖拽坐标限制在屏幕内 (Clamp Window Boundaries)
+-- 限制窗口拖拽不要超出屏幕边界
 local function ClampWindowPosition(pos, winSize)
     local viewport = workspace.CurrentCamera and workspace.CurrentCamera.ViewportSize or Vector2.new(1280, 720)
     local sizeX = winSize.X.Offset
@@ -308,7 +308,7 @@ Library.SetSoundVolume = function(vol) Saved.SoundVolume = vol; SaveConfig() end
 Library.SetSoundId = function(id) Saved.SoundId = id; SaveConfig() end
 
 -- ============================================================
--- [5] Color Math & Dynamic Rainbow/Breathing/Pulse Animation
+-- [5] Color Math & Border Effects
 -- ============================================================
 local function HSVToRGB(h, s, v)
     local c = v * s
@@ -361,7 +361,7 @@ local function GetCurrentBorderColor()
 end
 
 -- ============================================================
--- [6] Base Helper Creators
+-- [6] UI Primitive Helpers
 -- ============================================================
 local function CreateCorner(parent, radius)
     local c = Instance.new("UICorner")
@@ -410,13 +410,11 @@ local function MakeLabel(parent, props)
 end
 
 -- ============================================================
--- [7] Window & Layout Constructor
+-- [7] Core Window & Layout Architecture
 -- ============================================================
 local MainWindow = nil
 local RootScreenGui = nil
-local MainFrame = nil
 local BackgroundImageLabel = nil
-local SearchInputBox = nil
 local CurrentTabObj = nil
 local TabsList = {}
 
@@ -437,7 +435,7 @@ function Library:CreateWindow(opts)
     screenGui.Parent = TargetParent
     RootScreenGui = screenGui
 
-    -- [Splash 开屏载入动画]
+    -- Splash Loader 动画
     local splashFrame = Instance.new("Frame")
     splashFrame.Name = "SplashLoader"
     splashFrame.Size = UDim2.new(0, 320, 0, 180)
@@ -461,7 +459,7 @@ function Library:CreateWindow(opts)
     MakeLabel(splashFrame, {
         Size = UDim2.new(1, -30, 0, 20),
         Position = UDim2.new(0, 15, 0, 55),
-        Text = "正在加载 UI 引擎与依赖框架...",
+        Text = "正在初始化 UI 组件层与视图引擎...",
         TextColor3 = ThemeColors.TextMuted,
         TextSize = FontBaseSize - 1,
         TextXAlignment = Enum.TextXAlignment.Center,
@@ -491,7 +489,7 @@ function Library:CreateWindow(opts)
 
     task.wait(0.88)
 
-    -- 主窗口框架
+    -- 主 UI 窗口
     local win = Instance.new("Frame")
     win.Name = "MainWindow"
     win.Size = windowSize
@@ -505,7 +503,7 @@ function Library:CreateWindow(opts)
     CreateCorner(win, 12)
     local winStroke = CreateStroke(win, GetCurrentBorderColor(), 2)
 
-    -- 背景图层
+    -- 背景图片图层
     local bgImg = Instance.new("ImageLabel")
     bgImg.Name = "CustomBackground"
     bgImg.Size = UDim2.new(1, 0, 1, 0)
@@ -602,7 +600,7 @@ function Library:CreateWindow(opts)
         end
     end)
 
-    -- 拖拽移动与屏幕限制
+    -- 拖拽移动与安全 Boundary Clamp
     local dragging = false
     local dragStart, startPos
     header.InputBegan:Connect(function(input)
@@ -632,7 +630,7 @@ function Library:CreateWindow(opts)
         end
     end)
 
-    -- 窗口主体 Body Frame
+    -- 窗口主体 (Body)
     local bodyFrame = Instance.new("Frame")
     bodyFrame.Name = "Body"
     bodyFrame.Size = UDim2.new(1, -16, 1, -56)
@@ -641,7 +639,7 @@ function Library:CreateWindow(opts)
     bodyFrame.ZIndex = 15
     bodyFrame.Parent = win
 
-    -- 标签栏 (Tab 导航)
+    -- TabBar 标签导航栏
     local tabBar = Instance.new("ScrollingFrame")
     tabBar.Name = "TabBar"
     tabBar.Size = IsMobile and UDim2.new(1, 0, 0, 36) or UDim2.new(0, 130, 1, 0)
@@ -670,7 +668,7 @@ function Library:CreateWindow(opts)
         end
     end)
 
-    -- 内容容器 Pages
+    -- Pages 标签容器
     local pagesContainer = Instance.new("Frame")
     pagesContainer.Name = "PagesContainer"
     pagesContainer.Size = IsMobile and UDim2.new(1, 0, 1, -42) or UDim2.new(1, -138, 1, 0)
@@ -680,9 +678,8 @@ function Library:CreateWindow(opts)
     pagesContainer.Parent = bodyFrame
 
     MainWindow = win
-    MainFrame = win
 
-    -- 淡出 Splash Loader，展示主 UI
+    -- 渐变展现场景
     splashFrame:Destroy()
     win.Size = UDim2.new(0, windowSize.X.Offset, 0, 0)
     win.Position = UDim2.new(windowPos.X.Scale, windowPos.X.Offset, windowPos.Y.Scale, windowPos.Y.Offset + 30)
@@ -691,7 +688,7 @@ function Library:CreateWindow(opts)
         Position = windowPos,
     }):Play()
 
-    -- 循环发光边框更新
+    -- 边框发光颜色驱动循环
     task.spawn(function()
         while screenGui and screenGui.Parent do
             task.wait(0.02)
@@ -708,7 +705,6 @@ function Library:CreateWindow(opts)
     return win
 end
 
--- 动态标题修改 API
 function Library:SetTitle(title, subtitle)
     if MainWindow then
         local header = MainWindow:FindFirstChild("Header", true)
@@ -722,7 +718,7 @@ function Library:SetTitle(title, subtitle)
 end
 
 -- ============================================================
--- [8] Component System (Tab -> Section -> SubSection)
+-- [8] Component Construction & Automatic Size Engine
 -- ============================================================
 function Library:AddTab(opts)
     opts = opts or {}
@@ -734,6 +730,7 @@ function Library:AddTab(opts)
     local tabBar = bodyFrame:FindFirstChild("TabBar")
     local pagesContainer = bodyFrame:FindFirstChild("PagesContainer")
 
+    -- Tab 切换按钮
     local tabBtn = Instance.new("TextButton")
     tabBtn.Name = tabName .. "_Btn"
     tabBtn.Size = IsMobile and UDim2.new(0, 95, 1, 0) or UDim2.new(1, 0, 0, 34)
@@ -750,6 +747,7 @@ function Library:AddTab(opts)
     tabBtn.Parent = tabBar
     CreateCorner(tabBtn, 6)
 
+    -- Tab Page 内容页 (ScrollingFrame + AutomaticCanvasSize)
     local page = Instance.new("ScrollingFrame")
     page.Name = tabName .. "_Page"
     page.Size = UDim2.new(1, 0, 1, 0)
@@ -759,6 +757,8 @@ function Library:AddTab(opts)
     page.ScrollBarImageColor3 = ThemeColors.Accent
     page.Visible = false
     page.ZIndex = 17
+    page.AutomaticCanvasSize = Enum.AutomaticSize.Y
+    page.CanvasSize = UDim2.new(0, 0, 0, 0)
     page.Parent = pagesContainer
 
     local pageLayout = Instance.new("UIListLayout")
@@ -766,10 +766,6 @@ function Library:AddTab(opts)
     pageLayout.Padding = UDim.new(0, 8)
     pageLayout.Parent = page
     CreatePadding(page, 2, 8, 2, 4)
-
-    pageLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
-        page.CanvasSize = UDim2.new(0, 0, 0, pageLayout.AbsoluteContentSize.Y + 16)
-    end)
 
     local tabObj = {
         Name = tabName,
@@ -796,14 +792,18 @@ function Library:AddTab(opts)
 
     tabBtn.MouseButton1Click:Connect(ActivateTab)
 
-    if #TabsList == 0 then ActivateTab() end
+    -- 默认高亮并激活非 Settings 的功能 Tab
+    if #TabsList == 0 or (#TabsList == 1 and TabsList[1].Name == "UISettings") then
+        ActivateTab()
+    end
 
     table.insert(TabsList, tabObj)
 
-    -- 通用控件附加方法实现
+    -- 封装控件生成函数 (自动挂载与自适应高度)
     local function AttachComponents(containerFrame)
         local compAPI = {}
 
+        -- [1] 按钮 Button
         function compAPI:AddButton(p)
             p = p or {}
             local btnFrame = Instance.new("TextButton")
@@ -833,6 +833,7 @@ function Library:AddTab(opts)
             return btnFrame
         end
 
+        -- [2] 开关 Toggle
         function compAPI:AddToggle(p)
             p = p or {}
             local state = p.Default == true
@@ -891,6 +892,7 @@ function Library:AddTab(opts)
             return toggleFrame, state, function(nState) UpdateSwitch(nState) end
         end
 
+        -- [3] 滑块 Slider
         function compAPI:AddSlider(p)
             p = p or {}
             local minVal = p.Min or 0
@@ -993,6 +995,7 @@ function Library:AddTab(opts)
             return sliderFrame
         end
 
+        -- [4] HSV 2D 色盘 HSVPicker
         function compAPI:AddHSVPicker(p)
             p = p or {}
             local curColor = p.Default or Color3.fromRGB(255, 0, 0)
@@ -1119,6 +1122,7 @@ function Library:AddTab(opts)
             return pickerFrame
         end
 
+        -- [5] 下拉选框 Dropdown
         function compAPI:AddDropdown(p)
             p = p or {}
             local itemsList = p.Values or {"选项一", "选项二"}
@@ -1230,6 +1234,7 @@ function Library:AddTab(opts)
             return dropFrame, dropAPI
         end
 
+        -- [6] 参数调配 Input
         function compAPI:AddInput(p)
             p = p or {}
             local inputFrame = Instance.new("Frame")
@@ -1272,6 +1277,7 @@ function Library:AddTab(opts)
             return inputFrame
         end
 
+        -- [7] 按键绑定 Keybind
         function compAPI:AddKeybind(p)
             p = p or {}
             local currentKey = p.Default or Enum.KeyCode.E
@@ -1326,6 +1332,7 @@ function Library:AddTab(opts)
             return kbFrame
         end
 
+        -- [8] 标签文本 Label
         function compAPI:AddLabel(p)
             p = p or {}
             local lblFrame = Instance.new("Frame")
@@ -1358,6 +1365,7 @@ function Library:AddTab(opts)
             return lblFrame
         end
 
+        -- [9] 动态玩家选择器 PlayerSelector
         function compAPI:AddPlayerSelector(p)
             p = p or {}
             local function GetPlayerNames()
@@ -1385,6 +1393,7 @@ function Library:AddTab(opts)
             return dropFrame
         end
 
+        -- [10] 图片图标显示 Image
         function compAPI:AddImage(p)
             p = p or {}
             local imgFrame = Instance.new("Frame")
@@ -1417,6 +1426,7 @@ function Library:AddTab(opts)
             return imgFrame
         end
 
+        -- [11] 运行状态显示器 Status
         function compAPI:AddStatus(p)
             p = p or {}
             local statusFrame = Instance.new("Frame")
@@ -1452,7 +1462,7 @@ function Library:AddTab(opts)
     local tabCompAPI = AttachComponents(page)
     for k, v in pairs(tabCompAPI) do tabObj[k] = v end
 
-    -- [分区 Section] 接口
+    -- [分区 Section] 核心逻辑 (原生 AutomaticSize 自适应伸缩)
     function tabObj:AddSection(sOpts)
         sOpts = sOpts or {}
         local secName = sOpts.Name or ("Section_" .. tostring(#self.Sections + 1))
@@ -1461,6 +1471,7 @@ function Library:AddTab(opts)
         local secFrame = Instance.new("Frame")
         secFrame.Name = secName
         secFrame.Size = UDim2.new(1, 0, 0, 0)
+        secFrame.AutomaticSize = Enum.AutomaticSize.Y
         secFrame.BackgroundColor3 = ThemeColors.BackgroundSecondary
         secFrame.BorderSizePixel = 0
         secFrame.ZIndex = 18
@@ -1487,8 +1498,9 @@ function Library:AddTab(opts)
 
         local secBody = Instance.new("Frame")
         secBody.Name = "Body"
-        secBody.Size = UDim2.new(1, -12, 1, -34)
+        secBody.Size = UDim2.new(1, -12, 0, 0)
         secBody.Position = UDim2.new(0, 6, 0, 32)
+        secBody.AutomaticSize = Enum.AutomaticSize.Y
         secBody.BackgroundTransparency = 1
         secBody.ZIndex = 19
         secBody.Parent = secFrame
@@ -1497,10 +1509,7 @@ function Library:AddTab(opts)
         secLayout.SortOrder = Enum.SortOrder.LayoutOrder
         secLayout.Padding = UDim.new(0, 6)
         secLayout.Parent = secBody
-
-        secLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
-            secFrame.Size = UDim2.new(1, 0, 0, secLayout.AbsoluteContentSize.Y + 38)
-        end)
+        CreatePadding(secBody, 2, 8, 0, 0)
 
         local secObj = {
             Name = secName,
@@ -1512,7 +1521,7 @@ function Library:AddTab(opts)
         local secCompAPI = AttachComponents(secBody)
         for k, v in pairs(secCompAPI) do secObj[k] = v end
 
-        -- [再分区 SubSection] 嵌套接口
+        -- [再分区 SubSection] 嵌套逻辑
         function secObj:AddSubSection(ssOpts)
             ssOpts = ssOpts or {}
             local subTitle = ssOpts.Title or "子分区"
@@ -1520,6 +1529,7 @@ function Library:AddTab(opts)
             local subSecFrame = Instance.new("Frame")
             subSecFrame.Name = "SubSection_" .. subTitle
             subSecFrame.Size = UDim2.new(1, 0, 0, 0)
+            subSecFrame.AutomaticSize = Enum.AutomaticSize.Y
             subSecFrame.BackgroundColor3 = ThemeColors.Surface
             subSecFrame.BorderSizePixel = 0
             subSecFrame.ZIndex = 20
@@ -1537,8 +1547,9 @@ function Library:AddTab(opts)
 
             local subBody = Instance.new("Frame")
             subBody.Name = "SubBody"
-            subBody.Size = UDim2.new(1, -10, 1, -28)
+            subBody.Size = UDim2.new(1, -10, 0, 0)
             subBody.Position = UDim2.new(0, 5, 0, 26)
+            subBody.AutomaticSize = Enum.AutomaticSize.Y
             subBody.BackgroundTransparency = 1
             subBody.ZIndex = 21
             subBody.Parent = subSecFrame
@@ -1547,10 +1558,7 @@ function Library:AddTab(opts)
             subLayout.SortOrder = Enum.SortOrder.LayoutOrder
             subLayout.Padding = UDim.new(0, 5)
             subLayout.Parent = subBody
-
-            subLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
-                subSecFrame.Size = UDim2.new(1, 0, 0, subLayout.AbsoluteContentSize.Y + 32)
-            end)
+            CreatePadding(subBody, 2, 6, 0, 0)
 
             local subObj = {
                 Name = subTitle,
@@ -1573,14 +1581,14 @@ function Library:AddTab(opts)
 end
 
 -- ============================================================
--- [9] Toast Notification Engine
+-- [9] Notification Engine
 -- ============================================================
 local ActiveNotifications = {}
 
 function Library:Notify(opts)
     opts = opts or {}
     local titleText = opts.Title or "系统通知"
-    local msgText = opts.Text or opts.Message or "操作已执行"
+    local msgText = opts.Text or opts.Message or "操作成功"
     local duration = opts.Duration or 3.5
     local playAudio = opts.Sound ~= false
 
@@ -1638,12 +1646,12 @@ function Library:Notify(opts)
 end
 
 -- ============================================================
--- [10] Built-in Settings Tab (有序再分区架构)
+-- [10] Built-in Settings Tab
 -- ============================================================
 function Library:BuildSettingsTab()
     local setTab = Library:AddTab({ Name = "UISettings", Title = "UI 设置" })
 
-    -- 外观与灯效 (分区)
+    -- 外观样式与灯效 (分区)
     local styleSec = setTab:AddSection({ Title = "外观样式与动画" })
 
     styleSec:AddSlider({
@@ -1759,17 +1767,17 @@ function Library:BuildSettingsTab()
             Saved.ThemeName = "Dark"
             Saved.SoundEnabled = true
             SaveConfig()
-            Library:Notify({ Title = "配置重置", Text = "请重新载入脚本以应用默认设置" })
+            Library:Notify({ Title = "配置重置", Text = "重置成功，请重新载入脚本生效" })
         end
     })
 
-    -- 作者信息与版权 (分区 + 再分区) - 保障 Log_quick 标注不可篡改
+    -- 作者信息与版权 (分区 + 再分区)
     local creditSec = setTab:AddSection({ Title = "关于与脚本版权" })
     local subAuthor = creditSec:AddSubSection({ Title = "作者署名 (不可修改)" })
 
     subAuthor:AddLabel({
         Text = "UI 框架作者: Log_quick (不可更改)",
-        SubText = "核心库版本: v3.0 Master Release",
+        SubText = "核心库版本: v3.5 Rebuilt Release",
     })
 
     local scriptAuthorLbl = subAuthor:AddLabel({
@@ -1792,7 +1800,7 @@ function Library:BuildSettingsTab()
 end
 
 -- ============================================================
--- [11] FPS / Ping Stats Floating Overlay
+-- [11] FPS / Ping Floating Widget
 -- ============================================================
 local FloatingStatsGui = nil
 
@@ -1888,7 +1896,7 @@ function Library:ShowFloatingStatus() Library:ToggleStats(true) end
 function Library:HideFloatingStatus() Library:ToggleStats(false) end
 
 -- ============================================================
--- [12] Watermark & Custom Background API
+-- [12] Watermark & Custom Background
 -- ============================================================
 local WatermarkGui = nil
 
@@ -1947,7 +1955,7 @@ function Library:SetBackground(opts)
 end
 
 -- ============================================================
--- [13] Fuzzy Filter Search System
+-- [13] Fuzzy Keyword Search Filter
 -- ============================================================
 function Library:CreateSearch(opts)
     opts = opts or {}
@@ -1972,14 +1980,13 @@ function Library:CreateSearch(opts)
     searchBox.Parent = header
     CreateCorner(searchBox, 6)
 
-    SearchInputBox = searchBox
-
     searchBox:GetPropertyChangedSignal("Text"):Connect(function()
-        local query = string.lower(searchBox.Text)
+        local query = string.lower(searchBox.Text:gsub("%s+", ""))
         if CurrentTabObj and CurrentTabObj.Page then
             for _, item in ipairs(CurrentTabObj.Page:GetDescendants()) do
                 if item:IsA("Frame") or item:IsA("TextButton") then
-                    if item.Name:sub(1, 6) == "Button" or item.Name:sub(1, 6) == "Toggle" or item.Name:sub(1, 6) == "Slider" or item.Name:sub(1, 8) == "Dropdown" or item.Name:sub(1, 5) == "Input" then
+                    local prefix = item.Name:sub(1, 6)
+                    if prefix == "Button" or prefix == "Toggle" or prefix == "Slider" or item.Name:sub(1, 8) == "Dropdown" or item.Name:sub(1, 5) == "Input" then
                         if query == "" then
                             item.Visible = true
                         else
@@ -2003,7 +2010,7 @@ function Library:CreateSearch(opts)
 end
 
 -- ============================================================
--- [14] Modal Key License Verification System
+-- [14] Key License Verification
 -- ============================================================
 function Library:CreateKeySystem(opts)
     opts = opts or {}
@@ -2126,7 +2133,7 @@ function Library:Initialize(opts)
     -- 构建内置 UI 设置面板
     Library:BuildSettingsTab()
 
-    -- 构建搜索栏
+    -- 创建搜索栏
     Library:CreateSearch()
 
     -- 默认开启 FPS / Ping 悬浮窗
